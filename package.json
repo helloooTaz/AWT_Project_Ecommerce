@@ -1,0 +1,78 @@
+{
+  "name": "thread-commerce-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": "^22.13.0 || ^24.11.0"
+  },
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "lint": "eslint src test",
+    "format": "prettier --write src test",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "db:migration:create": "typeorm migration:create",
+    "db:migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
+    "db:migration:show": "typeorm-ts-node-commonjs migration:show -d src/database/data-source.ts",
+    "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
+    "db:migrate:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
+    "db:migrate:prod": "typeorm migration:run -d dist/database/data-source.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.2.8",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/passport": "^11.0.0",
+    "@nestjs/platform-express": "^11.2.8",
+    "@nestjs/swagger": "^11.0.0",
+    "@nestjs/typeorm": "^11.0.3",
+    "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.0",
+    "dotenv": "^17.0.0",
+    "joi": "^18.0.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "pg": "^8.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.0",
+    "typeorm": "^1.1.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/testing": "^11.2.8",
+    "@types/bcrypt": "^6.0.0",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.0.0",
+    "@types/passport-jwt": "^4.0.0",
+    "@types/supertest": "^6.0.0",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.0.0",
+    "jest": "^30.0.0",
+    "prettier": "^3.0.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.0",
+    "typescript-eslint": "^8.0.0"
+  },
+  "overrides": {
+    "@nestjs/platform-express": {
+      "multer": "2.5.0"
+    }
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["<rootDir>/src/**/*.spec.ts", "<rootDir>/test/**/*.spec.ts"],
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
+    }
+  }
+}
