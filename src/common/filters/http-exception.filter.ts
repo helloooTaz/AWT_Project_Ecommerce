@@ -7,7 +7,8 @@ import {
   type ArgumentsHost,
   type ExceptionFilter,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { QueryFailedError } from 'typeorm';
 import { RequestValidationException } from '../pipes/request-validation.pipe';
 
 function getStatus(exception: unknown): number {
@@ -34,23 +35,40 @@ function getStatus(exception: unknown): number {
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
-    const response = host.switchToHttp().getResponse<Response>();
+    const http = host.switchToHttp();
+    const response = http.getResponse<Response>();
     if (response.headersSent) {
       response.end();
       return;
     }
 
-    const status = getStatus(exception);
+    const driverError: unknown =
+      exception instanceof QueryFailedError ? exception.driverError : exception;
+    const duplicateKey =
+      driverError instanceof Error &&
+      'code' in driverError &&
+      driverError.code === '23505';
+    const status = duplicateKey ? HttpStatus.CONFLICT : getStatus(exception);
     const validation =
       exception instanceof RequestValidationException ? exception : null;
 
+    let message =
+      status >= 500
+        ? 'Internal server error'
+        : (STATUS_CODES[status] ?? 'Request failed');
+    if (duplicateKey) {
+      message = 'A record with these values already exists';
+    } else if (
+      exception instanceof HttpException &&
+      (validation || http.getRequest<Request>().route)
+    ) {
+      // Framework errors before route matching can include the URL or input.
+      message = exception.message;
+    }
+
     response.status(status).json({
       success: false,
-      message:
-        validation?.message ??
-        (status >= 500
-          ? 'Internal server error'
-          : (STATUS_CODES[status] ?? 'Request failed')),
+      message,
       error: {
         code: validation
           ? 'VALIDATION_ERROR'
