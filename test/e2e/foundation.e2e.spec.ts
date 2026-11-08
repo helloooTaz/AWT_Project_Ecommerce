@@ -3,6 +3,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  InternalServerErrorException,
   NotFoundException,
   Post,
   type INestApplication,
@@ -55,6 +56,11 @@ class TestController {
   @Get('failure')
   fail() {
     throw new Error('Private database error');
+  }
+
+  @Get('internal-error')
+  internalError() {
+    throw new InternalServerErrorException('Private server error');
   }
 }
 
@@ -159,6 +165,19 @@ describe('HTTP foundation', () => {
   it('hides unexpected exception messages', async () => {
     const response = await request(app.getHttpServer())
       .get('/api/v1/test/failure')
+      .expect(500);
+
+    expect(response.body).toEqual({
+      success: false,
+      message: 'Internal server error',
+      error: { code: 'INTERNAL_SERVER_ERROR', details: [] },
+      meta: { requestId },
+    });
+  });
+
+  it('hides explicitly thrown internal server error messages', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/test/internal-error')
       .expect(500);
 
     expect(response.body).toEqual({

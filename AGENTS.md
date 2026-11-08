@@ -22,3 +22,10 @@ The authenticated roles are `CUSTOMER`, `STAFF`, `INVENTORY_MANAGER` and `ADMIN`
 - Keep `synchronize: false`. Write and review versioned migrations in `src/database/migrations` for schema changes. Each feature owner authors the migrations for their domain and verifies them against a clean database.
 - Keep TypeScript strict, use ESLint and Prettier, and keep `.env` out of Git. Update `.env.example` for new configuration and commit `package-lock.json` with dependency changes.
 - Run `npm ci`, `npm run build`, `npm run lint` and `npm test` before review. Include the affected endpoints, migration names and verification results in feature reviews.
+
+## Git workflow
+
+- Follow Conventional Commits with prefixes such as `feat:`, `fix:`, `chore:`, `test:` and `docs:`.
+- Group logically related edits into meaningful commits and avoid excessive micro-commits. Keep unrelated features in separate commits.
+- Keep feature development on dedicated branches and use pull requests to integrate into `main`.
+- Obtain explicit approval before pushing or merging.

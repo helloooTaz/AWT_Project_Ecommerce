@@ -59,6 +59,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (duplicateKey) {
       message = 'A record with these values already exists';
     } else if (
+      status >= 400 &&
+      status < 500 &&
       exception instanceof HttpException &&
       (validation || http.getRequest<Request>().route)
     ) {
