@@ -62,6 +62,11 @@ Reuse the canonical `User` and `UsersService` in `src/modules/users`, the roles 
 
 Send `PATCH /api/v1/users/me` with a bearer token and a body such as `{"fullName":"Samira Rahman"}`. Any active authenticated account can update its own name. The API trims surrounding whitespace and returns the account ID and updated name in `data`.
 
+## Catalog and Inventory handoff
+
+- Staff should reuse the canonical `Category`, `Product`, and `ProductVariant` entities from `CreateCartCatalog1794470400002`. The category table is required by the product foreign key. Cart can use the batched `CatalogService.findVariantsWithProducts` lookup and the published/active rule in `CatalogService.isPurchasable`. Staff owns catalog writes and the future transaction-aware checkout lookup.
+- Inventory should extend the canonical `InventoryBalance` from `CreateInventoryBalances1794470400003`. `InventoryService.getAvailability` reads `onHand - reserved` by variant and returns zero for a missing balance. Inventory owns stock writes and the future reservation operations.
+
 ## Verification
 
 ```sh
