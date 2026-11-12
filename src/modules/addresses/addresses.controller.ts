@@ -23,6 +23,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { successResponse } from '../../common/dto/success-response';
 import type { AuthenticatedUser } from '../auth/authenticated-user';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -33,7 +34,6 @@ import { UserRole } from '../roles/user-role.enum';
 import { AddressesService } from './addresses.service';
 import { addressResponse } from './dto/address-response';
 import { CreateAddressDto } from './dto/create-address.dto';
-import { ListAddressesQueryDto } from './dto/list-addresses-query.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 
 const addressExample = {
@@ -96,7 +96,7 @@ export class AddressesController {
   })
   async list(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() query: ListAddressesQueryDto,
+    @Query() query: PaginationQueryDto,
   ) {
     const { addresses, pagination } = await this.addresses.list(user.id, query);
     return successResponse(addresses.map(addressResponse), 'OK', pagination);

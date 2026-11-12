@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RequestValidationException } from '../../common/pipes/request-validation.pipe';
 import type { CreateAddressDto } from './dto/create-address.dto';
-import type { ListAddressesQueryDto } from './dto/list-addresses-query.dto';
 import type { UpdateAddressDto } from './dto/update-address.dto';
 import { Address } from './entities/address.entity';
 
@@ -17,7 +17,7 @@ export class AddressesService {
     return this.addresses.save(this.addresses.create({ ...input, userId }));
   }
 
-  async list(userId: string, { page, limit }: ListAddressesQueryDto) {
+  async list(userId: string, { page, limit }: PaginationQueryDto) {
     const [addresses, total] = await this.addresses.findAndCount({
       where: { userId },
       order: { createdAt: 'DESC', id: 'DESC' },

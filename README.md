@@ -1,6 +1,6 @@
 # THREAD Commerce API
 
-THREAD is a single-brand fashion e-commerce backend for CSC4161. The NestJS application includes shared authentication and customer delivery address management. Feature ownership is defined in [AGENTS.md](AGENTS.md).
+THREAD is a single-brand fashion e-commerce backend for CSC4161. The NestJS application includes shared authentication, customer profiles, delivery addresses, shopping carts, and order history. Feature ownership is defined in [AGENTS.md](AGENTS.md).
 
 ## Run locally
 
@@ -81,6 +81,19 @@ Each line shows `availableQuantity` and `canPurchase`. A line stays visible when
 - Inventory should extend the canonical `InventoryBalance` from `CreateInventoryBalances1794470400003`. `InventoryService.getAvailability` reads `onHand - reserved` by variant and returns zero for a missing balance. Inventory owns stock writes and the future reservation operations.
 - `CreateCarts1794470400004` enforces one cart per user and one line per variant per cart. Cart lines keep a reference to the canonical variant and read its price on demand.
 
+## Customer order history
+
+Use a `CUSTOMER` bearer token in Swagger or the `Authorization` header. Both routes return the standard success envelope.
+
+| Method and path | Result |
+| --- | --- |
+| `GET /api/v1/me/orders` | List the caller's order summaries with ID, status, currency, total, and timestamps. Orders sort by creation time descending, then ID descending. Defaults to `page=1&limit=20`, with a maximum limit of 100. Counts are in `meta.pagination`. |
+| `GET /api/v1/me/orders/:id` | Read an owned order, its shipping address snapshot, and item snapshots with SKU, product name, size, color, unit price, quantity, and line total. A missing or other customer's order returns 404. |
+
+Amounts such as `totalMinor`, `unitPriceMinor`, and `lineTotalMinor` are decimal strings representing integer BDT minor units. For example, `"250000"` represents BDT 2,500.00. A removed catalog variant appears as `variantId: null` and its saved item details remain available.
+
+`CreateOrders1794470400005` creates `orders`, `order_items`, and the `order_status` enum after the account and catalog tables. The Orders service is exported for other backend modules and provides a summary lookup by ID for trusted callers such as fulfillment. Apply the migrations and use the PostgreSQL order-history tests to exercise populated orders with fixtures. A newly registered customer sees empty history until orders are recorded.
+
 ## Verification
 
 ```sh
@@ -89,4 +102,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the profile, address, and cart suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite starts the full app with a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile, address, cart, and order-history suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite starts the full app with a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
