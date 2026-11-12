@@ -5,7 +5,7 @@ import { configureApp } from './app.setup';
 import type { Environment } from './config/env.validation';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get<ConfigService<Environment, true>>(ConfigService);
 
   configureApp(app, config.get('SWAGGER_ENABLED', { infer: true }));

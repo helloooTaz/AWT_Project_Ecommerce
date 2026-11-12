@@ -10,6 +10,7 @@ describe('environment configuration', () => {
       DATABASE_URL,
       PORT: 3000,
       SWAGGER_ENABLED: true,
+      PAYMENT_PROVIDER: 'DISABLED',
     });
     expect(
       validateEnvironment({
@@ -42,5 +43,36 @@ describe('environment configuration', () => {
   it('validates the database URL independently for the migration CLI', () => {
     expect(validateDatabaseUrl(DATABASE_URL)).toBe(DATABASE_URL);
     expect(() => validateDatabaseUrl(undefined)).toThrow('DATABASE_URL');
+  });
+
+  it('requires an explicit mock mode and a separate signing secret', () => {
+    const environment = { DATABASE_URL, JWT_SECRET, PAYMENT_PROVIDER: 'MOCK' };
+    const secret = randomBytes(32).toString('hex');
+    expect(
+      validateEnvironment({
+        ...environment,
+        MOCK_PAYMENT_SIGNING_SECRET: secret,
+      }),
+    ).toMatchObject({ PAYMENT_PROVIDER: 'MOCK' });
+    for (const value of [undefined, '', 'short', JWT_SECRET]) {
+      expect(() =>
+        validateEnvironment({
+          ...environment,
+          MOCK_PAYMENT_SIGNING_SECRET: value,
+        }),
+      ).toThrow(
+        'Invalid environment configuration: MOCK_PAYMENT_SIGNING_SECRET',
+      );
+    }
+    expect(() =>
+      validateEnvironment({ ...environment, PAYMENT_PROVIDER: 'REAL' }),
+    ).toThrow('Invalid environment configuration: PAYMENT_PROVIDER');
+    expect(
+      validateEnvironment({
+        DATABASE_URL,
+        JWT_SECRET,
+        MOCK_PAYMENT_SIGNING_SECRET: '',
+      }),
+    ).toMatchObject({ PAYMENT_PROVIDER: 'DISABLED' });
   });
 });

@@ -1,6 +1,6 @@
 # THREAD Commerce API
 
-THREAD is a single-brand fashion e-commerce backend for CSC4161. The NestJS application includes shared authentication, customer profiles, delivery addresses, shopping carts, and order history. Feature ownership is defined in [AGENTS.md](AGENTS.md).
+THREAD is a single-brand fashion e-commerce backend for CSC4161. The NestJS application includes shared authentication, customer profiles, delivery addresses, shopping carts, checkout, order history, and mock payments. Feature ownership is defined in [AGENTS.md](AGENTS.md).
 
 ## Run locally
 
@@ -21,6 +21,8 @@ THREAD is a single-brand fashion e-commerce backend for CSC4161. The NestJS appl
 | `JWT_SECRET` | Required for app startup. Use a distinct random secret per environment with at least 32 characters |
 | `PORT` | HTTP port, defaults to `3000` |
 | `SWAGGER_ENABLED` | Set to `false` to disable Swagger UI and OpenAPI JSON. Defaults to `true` |
+| `PAYMENT_PROVIDER` | Defaults to `DISABLED`. Set explicitly to `MOCK` to enable mock payment sessions and callbacks |
+| `MOCK_PAYMENT_SIGNING_SECRET` | Required in `MOCK` mode. Generate a separate random secret using the same command as for `JWT_SECRET` |
 
 With the default port, `GET http://localhost:3000/api/v1/health` returns HTTP 200 with `data.status` set to `"ok"`. This checks HTTP liveness. Startup requires a working PostgreSQL connection. Open Swagger UI at `http://localhost:3000/api/docs`, or fetch the OpenAPI document from `/api/docs-json`.
 
@@ -110,6 +112,39 @@ Send `POST /api/v1/checkout` with a `CUSTOMER` bearer token, an `Idempotency-Key
 
 Checkout owns one PostgreSQL transaction. It locks the customer's cart row and purchased lines, reads authoritative catalog prices, saves the address and product snapshots, reserves stock for 15 minutes, records the key, and clears the purchased items. A failure rolls back the order, reservation, key, and cart changes together. `CreateIdempotencyRecords1794470400007` enforces one record per customer and key.
 
+## Mock payments
+
+Apply `CreatePayments1794470400008`, set `PAYMENT_PROVIDER=MOCK`, and configure a dedicated `MOCK_PAYMENT_SIGNING_SECRET` before starting the server. Keep the signing secret on the provider or demo operator side.
+
+1. Create an order through checkout. Send an empty `POST /api/v1/orders/:id/payment-session` with the owner's `CUSTOMER` bearer token. The 200 response includes `providerRef`, `status`, `amountMinor`, `currency`, and `expiresAt`. The amount comes from the order and is an exact decimal string in BDT minor units. `expiresAt` is the earliest reservation expiry. Missing and other-owned orders return 404. Ineligible orders return 409.
+2. From a separate local PowerShell terminal, replace the example reference and amount below with those returned by the session. This signs the UTF-8 JSON bytes and sends that same body to the mock callback. The script reads the secret from the environment or local `.env`. Use `FAILED` to demonstrate a declined attempt.
+
+   ```powershell
+   @'
+   const { createHmac, randomUUID } = require('node:crypto');
+   const [providerRef, amountMinor, status] = process.argv.slice(2);
+   const body = Buffer.from(JSON.stringify({ eventId: randomUUID(), providerRef, amountMinor, status }));
+   const signature = createHmac('sha256', process.env.MOCK_PAYMENT_SIGNING_SECRET).update(body).digest('hex');
+   const port = process.env.PORT || '3000';
+   fetch(`http://localhost:${port}/api/v1/webhooks/payments/mock`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json', 'X-Mock-Payment-Signature': signature },
+     body,
+   }).then(async (response) => {
+     console.log(response.status, await response.text());
+     if (!response.ok) process.exitCode = 1;
+   });
+   '@ | node --env-file-if-exists=.env - 'c99f1619-d5a6-4a56-94d4-1dbd8f1bff4b' '250000' 'PAID'
+   ```
+
+3. Read the order through `GET /api/v1/me/orders/:id`. A valid success moves the payment to `PAID` and the order to `CONFIRMED` in the same transaction. Reservations stay `ACTIVE` and inventory balances retain their existing quantities for fulfillment.
+
+An eligible order reuses its open session. A failed attempt is terminal and the order keeps its current status and reservations. While the order remains payable, a new session gets a new reference. The first accepted terminal outcome wins for each attempt. A distinct event with the same outcome is acknowledged, and the opposite outcome returns 409.
+
+The webhook expects uncompressed JSON and a 64-character hexadecimal HMAC-SHA256 digest in `X-Mock-Payment-Signature`. Each event has a provider-generated UUID v4 `eventId`. Reuse the same ID and fields when retrying delivery. An already accepted ID returns 200 with `data.duplicate` set to `true`. Reusing an ID with different fields returns 409. Rejected events and rolled-back transactions leave the ID available for retry. The app limits callbacks to 60 requests per connected IP per minute per process. A reverse proxy can share that budget across its clients.
+
+Payment processing locks the order before inspecting its reservations or writing a payment outcome. Future cancellation, expiry, and fulfillment transactions should take the order lock before changing its reservations and apply their eligibility checks against the locked order status.
+
 ## Verification
 
 ```sh
@@ -118,4 +153,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the profile, address, cart, order-history, checkout dependency, and checkout suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile, address, cart, order-history, checkout dependency, checkout, and payment suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. The payment suite generates its own mock signing secret. Jest skips these suites when `TEST_DATABASE_URL` is unset.

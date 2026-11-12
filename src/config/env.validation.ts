@@ -5,6 +5,8 @@ export interface Environment {
   JWT_SECRET: string;
   PORT: number;
   SWAGGER_ENABLED: boolean;
+  PAYMENT_PROVIDER: 'DISABLED' | 'MOCK';
+  MOCK_PAYMENT_SIGNING_SECRET?: string;
 }
 
 const databaseUrlSchema = Joi.string()
@@ -16,6 +18,12 @@ const schema = Joi.object<Environment>({
   JWT_SECRET: Joi.string().trim().min(32).required(),
   PORT: Joi.number().integer().min(1).max(65535).default(3000),
   SWAGGER_ENABLED: Joi.boolean().default(true),
+  PAYMENT_PROVIDER: Joi.string().valid('DISABLED', 'MOCK').default('DISABLED'),
+  MOCK_PAYMENT_SIGNING_SECRET: Joi.when('PAYMENT_PROVIDER', {
+    is: 'MOCK',
+    then: Joi.string().trim().min(32).invalid(Joi.ref('JWT_SECRET')).required(),
+    otherwise: Joi.string().allow(''),
+  }),
 });
 
 export function validateDatabaseUrl(value: unknown): string {
