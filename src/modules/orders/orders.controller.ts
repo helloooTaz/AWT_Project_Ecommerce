@@ -1,14 +1,18 @@
 import {
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -26,6 +30,7 @@ import { Roles } from '../roles/roles.decorator';
 import { RolesGuard } from '../roles/roles.guard';
 import { UserRole } from '../roles/user-role.enum';
 import { OrderStatus } from './entities/order.entity';
+import { OrderCancellationService } from './order-cancellation.service';
 import { OrdersService } from './orders.service';
 
 const orderExample = {
@@ -71,7 +76,10 @@ const envelopeExample = { success: true, message: 'OK', meta: exampleMeta };
 @Roles([UserRole.CUSTOMER])
 @Controller('me/orders')
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly cancellation: OrderCancellationService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List your orders, newest first' })
@@ -115,5 +123,35 @@ export class OrdersController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return successResponse(await this.orders.getForCustomer(user.id, id));
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cancel your pending payment order',
+    description:
+      'Only PENDING_PAYMENT orders are eligible. Repeating a cancellation returns 409.',
+  })
+  @ApiParam({ name: 'id', schema: { type: 'string', format: 'uuid' } })
+  @ApiBadRequestResponse({ description: 'Invalid order ID' })
+  @ApiNotFoundResponse({ description: 'Order not found' })
+  @ApiConflictResponse({
+    description: 'Order cannot be cancelled or stock could not be released',
+  })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        ...envelopeExample,
+        data: { orderId: orderExample.id, status: OrderStatus.CANCELLED },
+      },
+    },
+  })
+  async cancel(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(
+      await this.cancellation.cancelForCustomer(user.id, id),
+    );
   }
 }

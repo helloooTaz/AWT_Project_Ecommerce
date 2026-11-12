@@ -102,6 +102,14 @@ Amounts such as `totalMinor`, `unitPriceMinor`, and `lineTotalMinor` are decimal
 
 `CreateOrders1794470400005` creates `orders`, `order_items`, and the `order_status` enum after the account and catalog tables. The Orders service is exported for other backend modules and provides a summary lookup by ID for trusted callers such as fulfillment. Apply the migrations and use the PostgreSQL order-history tests to exercise populated orders with fixtures. A newly registered customer sees empty history until orders are recorded.
 
+### Cancel an unpaid order
+
+Send an empty `POST /api/v1/me/orders/:id/cancel` with the owner's `CUSTOMER` bearer token. Only `PENDING_PAYMENT` orders are eligible. A successful cancellation returns 200 with the order ID in `data.orderId` and `CANCELLED` in `data.status`. Missing and other-owned orders return 404. Repeating a cancellation or cancelling an order in another status returns 409. Paid orders require a separate refund and cancellation process.
+
+Cancellation locks the order and calls `InventoryService.releaseForOrder(manager, orderId)` in the same transaction. Inventory locks the active reservation rows by order item ID and the affected balances by variant ID, subtracts the released quantities from `reserved`, and marks the reservations `RELEASED`. `onHand` stays the same. If every reservation was already released, an otherwise eligible order can still be cancelled. A failure rolls back the stock and order changes together.
+
+Payment callbacks take the same order lock. If successful payment commits first, cancellation returns 409. If cancellation commits first, new success and failure callbacks and payment-session requests return 409. An outstanding `PENDING` payment attempt stays in history and is permanently ineligible for processing. Replays of previously accepted events still use the existing deduplication response.
+
 ## Checkout
 
 Send `POST /api/v1/checkout` with a `CUSTOMER` bearer token, an `Idempotency-Key` header, and a body such as `{"addressId":"6268504d-c404-4730-9abb-9e8bd527f06a"}`. Keys are case-sensitive and accept 1–128 ASCII letters, digits, dots, underscores, or hyphens.
@@ -143,7 +151,7 @@ An eligible order reuses its open session. A failed attempt is terminal and the 
 
 The webhook expects uncompressed JSON and a 64-character hexadecimal HMAC-SHA256 digest in `X-Mock-Payment-Signature`. Each event has a provider-generated UUID v4 `eventId`. Reuse the same ID and fields when retrying delivery. An already accepted ID returns 200 with `data.duplicate` set to `true`. Reusing an ID with different fields returns 409. Rejected events and rolled-back transactions leave the ID available for retry. The app limits callbacks to 60 requests per connected IP per minute per process. A reverse proxy can share that budget across its clients.
 
-Payment processing locks the order before inspecting its reservations or writing a payment outcome. Future cancellation, expiry, and fulfillment transactions should take the order lock before changing its reservations and apply their eligibility checks against the locked order status.
+Payment and cancellation lock the order before checking eligibility or changing its state. Future expiry processing can reuse `OrdersService.lockForUpdate` and `InventoryService.releaseForOrder` with the same transaction manager. Fulfillment should also lock the order before changing its reservations.
 
 ## Verification
 

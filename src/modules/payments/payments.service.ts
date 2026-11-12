@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DataSource, In } from 'typeorm';
 import type { Environment } from '../../config/env.validation';
+import { OrderStatus } from '../orders/entities/order.entity';
 import { OrdersService } from '../orders/orders.service';
 import type { MockPaymentEventDto } from './dto/mock-payment-event.dto';
 import { MockPaymentEvent } from './entities/mock-payment-event.entity';
@@ -26,7 +27,7 @@ export class PaymentsService {
     }
 
     return this.dataSource.transaction('READ COMMITTED', async (manager) => {
-      const order = await this.orders.lockForPayment(manager, orderId, userId);
+      const order = await this.orders.lockForUpdate(manager, orderId, userId);
       const expiresAt = await this.orders.getPaymentReservationExpiry(
         manager,
         order,
@@ -105,8 +106,13 @@ export class PaymentsService {
         throw new NotFoundException('Payment session not found');
       }
 
-      // Read the payment again after taking the same lock used to create sessions.
-      const order = await this.orders.lockForPayment(manager, session.orderId);
+      // Recheck eligibility after taking the order lock shared with cancellation.
+      const order = await this.orders.lockForUpdate(manager, session.orderId);
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new ConflictException(
+          'Cancelled orders cannot accept payment events',
+        );
+      }
       const payment = await payments.findOneByOrFail({ id: session.id });
       if (
         amountMinor !== order.totalMinor ||

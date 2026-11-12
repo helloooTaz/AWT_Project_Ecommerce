@@ -23,6 +23,7 @@ import {
   StockReservation,
   StockReservationStatus,
 } from '../../src/modules/inventory/entities/stock-reservation.entity';
+import { InventoryService } from '../../src/modules/inventory/inventory.service';
 import { OrderItem } from '../../src/modules/orders/entities/order-item.entity';
 import {
   Order,
@@ -43,10 +44,12 @@ const describeWithPostgres = testDatabaseUrl ? describe : describe.skip;
 const webhookPath = '/api/v1/webhooks/payments/mock';
 const sessionPath = (orderId: string) =>
   `/api/v1/orders/${orderId}/payment-session`;
+const cancellationPath = (orderId: string) =>
+  `/api/v1/me/orders/${orderId}/cancel`;
 const signatureHeader = 'X-Mock-Payment-Signature';
 const secret = randomBytes(32).toString('hex');
 
-describeWithPostgres('Mock payments with PostgreSQL', () => {
+describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
   let app: INestApplication<Server>;
   let db: DataSource;
   let owner: { id: string; token: string };
@@ -129,6 +132,37 @@ describeWithPostgres('Mock payments with PostgreSQL', () => {
     return send(JSON.stringify(body));
   }
 
+  function cancel(orderId: string, token = owner.token) {
+    return api().post(cancellationPath(orderId)).set('Authorization', token);
+  }
+
+  async function reservationFor(orderId: string) {
+    const { id } = await db
+      .getRepository(OrderItem)
+      .findOneByOrFail({ orderId });
+    return db
+      .getRepository(StockReservation)
+      .findOneByOrFail({ orderItemId: id });
+  }
+
+  async function expectOrderStock(
+    orderId: string,
+    orderStatus: OrderStatus,
+    reservationStatus: StockReservationStatus,
+    reserved: number,
+  ) {
+    expect(
+      await db.getRepository(Order).findOneByOrFail({ id: orderId }),
+    ).toMatchObject({ status: orderStatus });
+    expect(await reservationFor(orderId)).toMatchObject({
+      status: reservationStatus,
+      quantity: 2,
+    });
+    expect(
+      await db.getRepository(InventoryBalance).findOneByOrFail({ variantId }),
+    ).toMatchObject({ onHand: 10, reserved });
+  }
+
   async function expectState(
     orderId: string,
     orderStatus: OrderStatus,
@@ -141,6 +175,53 @@ describeWithPostgres('Mock payments with PostgreSQL', () => {
     expect(
       await db.getRepository(Payment).findOneByOrFail({ providerRef }),
     ).toMatchObject({ status: paymentStatus });
+  }
+
+  async function contendForOrderLock(
+    orderId: string,
+    requests: request.Test[],
+  ) {
+    const blocker = db.createQueryRunner();
+    let pending: Promise<PromiseSettledResult<request.Response>[]>;
+    let waiters = 0;
+    try {
+      await blocker.startTransaction();
+      await app.get(OrdersService).lockForUpdate(blocker.manager, orderId);
+      const [{ pid }] = await blocker.manager.query<{ pid: number }[]>(
+        'SELECT pg_backend_pid() AS pid',
+      );
+      pending = Promise.allSettled(requests);
+      for (
+        let attempt = 0;
+        attempt < 150 && waiters < requests.length;
+        attempt++
+      ) {
+        const [{ count }] = await db.query<{ count: number }[]>(
+          `WITH RECURSIVE blocked(pid) AS (
+             SELECT $1::int
+             UNION
+             SELECT activity.pid
+             FROM pg_stat_activity AS activity
+             JOIN blocked ON blocked.pid = ANY(pg_blocking_pids(activity.pid))
+             WHERE activity.datname = current_database()
+               AND activity.wait_event_type = 'Lock'
+           )
+           SELECT count(*)::int - 1 AS count FROM blocked`,
+          [pid],
+        );
+        waiters = count;
+        if (waiters < requests.length) await delay(20);
+      }
+    } finally {
+      if (blocker.isTransactionActive) await blocker.rollbackTransaction();
+      await blocker.release();
+    }
+    const responses = (await pending).map((result) => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    });
+    expect(waiters).toBeGreaterThanOrEqual(requests.length);
+    return responses;
   }
 
   beforeAll(async () => {
@@ -440,42 +521,10 @@ describeWithPostgres('Mock payments with PostgreSQL', () => {
     const payment = await openPayment(orderId);
     const success = event(payment);
     const failure = event(payment, PaymentStatus.FAILED);
-    const blocker = db.createQueryRunner();
-    let pending: Promise<PromiseSettledResult<request.Response>[]>;
-    let waiters = 0;
-    try {
-      await blocker.startTransaction();
-      await app.get(OrdersService).lockForPayment(blocker.manager, orderId);
-      const [{ pid }] = await blocker.manager.query<{ pid: number }[]>(
-        'SELECT pg_backend_pid() AS pid',
-      );
-      pending = Promise.allSettled([callback(success), callback(failure)]);
-      for (let attempt = 0; attempt < 150 && waiters < 2; attempt++) {
-        const [{ count }] = await db.query<{ count: number }[]>(
-          `WITH RECURSIVE blocked(pid) AS (
-             SELECT $1::int
-             UNION
-             SELECT activity.pid
-             FROM pg_stat_activity AS activity
-             JOIN blocked ON blocked.pid = ANY(pg_blocking_pids(activity.pid))
-             WHERE activity.datname = current_database()
-               AND activity.wait_event_type = 'Lock'
-           )
-           SELECT count(*)::int - 1 AS count FROM blocked`,
-          [pid],
-        );
-        waiters = count;
-        if (waiters < 2) await delay(20);
-      }
-    } finally {
-      if (blocker.isTransactionActive) await blocker.rollbackTransaction();
-      await blocker.release();
-    }
-    const [paid, failed] = (await pending).map((result) => {
-      if (result.status === 'rejected') throw result.reason;
-      return result.value;
-    });
-    expect(waiters).toBeGreaterThanOrEqual(2);
+    const [paid, failed] = await contendForOrderLock(orderId, [
+      callback(success),
+      callback(failure),
+    ]);
     expect([paid.status, failed.status].sort()).toEqual([200, 409]);
     const accepted = paid.status === 200 ? success : failure;
     const orderStatus =
@@ -612,6 +661,292 @@ describeWithPostgres('Mock payments with PostgreSQL', () => {
         }),
       ]),
     );
+  });
+
+  describe('Customer order cancellation', () => {
+    it('cancels only the requested order and releases only its stock once', async () => {
+      const first = await checkout();
+      const second = await checkout();
+      await expectOrderStock(
+        first.orderId,
+        OrderStatus.PENDING_PAYMENT,
+        StockReservationStatus.ACTIVE,
+        4,
+      );
+
+      const response = await cancel(first.orderId).expect(200);
+      expect(response.body).toMatchObject({
+        success: true,
+        data: { orderId: first.orderId, status: OrderStatus.CANCELLED },
+      });
+      await cancel(first.orderId).expect(409);
+      await expectOrderStock(
+        first.orderId,
+        OrderStatus.CANCELLED,
+        StockReservationStatus.RELEASED,
+        2,
+      );
+      await expectOrderStock(
+        second.orderId,
+        OrderStatus.PENDING_PAYMENT,
+        StockReservationStatus.ACTIVE,
+        2,
+      );
+    });
+
+    it('enforces JWT, customer role, ownership, and a valid order ID', async () => {
+      const { orderId } = await checkout();
+      await api().post(cancellationPath(orderId)).expect(401);
+      await cancel(orderId, staff.token).expect(403);
+      await cancel(orderId, other.token).expect(404);
+      await cancel(randomUUID()).expect(404);
+      await cancel('invalid-order-id').expect(400);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.PENDING_PAYMENT,
+        StockReservationStatus.ACTIVE,
+        2,
+      );
+    });
+
+    it.each([
+      OrderStatus.PROCESSING,
+      OrderStatus.SHIPPED,
+      OrderStatus.DELIVERED,
+      OrderStatus.EXPIRED,
+    ])('rejects %s orders', async (status) => {
+      const { orderId } = await checkout();
+      await db.getRepository(Order).update(orderId, { status });
+      await cancel(orderId).expect(409);
+      await expectOrderStock(orderId, status, StockReservationStatus.ACTIVE, 2);
+    });
+
+    it('rejects cancellation after a signed callback confirms the order', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      await callback(event(payment)).expect(200);
+      await cancel(orderId).expect(409);
+      await expectState(
+        orderId,
+        OrderStatus.CONFIRMED,
+        payment.providerRef,
+        PaymentStatus.PAID,
+      );
+      await expectOrderStock(
+        orderId,
+        OrderStatus.CONFIRMED,
+        StockReservationStatus.ACTIVE,
+        2,
+      );
+    });
+
+    it('cancels an unpaid order whose reservations were already released', async () => {
+      const { orderId } = await checkout();
+      await db.transaction(async (manager) => {
+        await app.get(OrdersService).lockForUpdate(manager, orderId);
+        await app.get(InventoryService).releaseForOrder(manager, orderId);
+      });
+      await expectOrderStock(
+        orderId,
+        OrderStatus.PENDING_PAYMENT,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+      await cancel(orderId).expect(200);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.CANCELLED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    });
+
+    it('rejects release when a balance cannot cover its reservation', async () => {
+      const { orderId } = await checkout();
+      await db
+        .getRepository(InventoryBalance)
+        .update({ variantId }, { reserved: 1 });
+      await cancel(orderId).expect(409);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.PENDING_PAYMENT,
+        StockReservationStatus.ACTIVE,
+        1,
+      );
+    });
+
+    it('releases stock once when two cancellation requests contend on the order lock', async () => {
+      const { orderId } = await checkout();
+      const responses = await contendForOrderLock(orderId, [
+        cancel(orderId),
+        cancel(orderId),
+      ]);
+      expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.CANCELLED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    }, 15000);
+
+    it('serializes cancellation against a concurrent successful payment callback', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      const payload = event(payment);
+      const [cancelled, paid] = await contendForOrderLock(orderId, [
+        cancel(orderId),
+        callback(payload),
+      ]);
+      expect([cancelled.status, paid.status].sort()).toEqual([200, 409]);
+      const paymentWon = paid.status === 200;
+      const orderStatus = paymentWon
+        ? OrderStatus.CONFIRMED
+        : OrderStatus.CANCELLED;
+      await expectState(
+        orderId,
+        orderStatus,
+        payment.providerRef,
+        paymentWon ? PaymentStatus.PAID : PaymentStatus.PENDING,
+      );
+      await expectOrderStock(
+        orderId,
+        orderStatus,
+        paymentWon
+          ? StockReservationStatus.ACTIVE
+          : StockReservationStatus.RELEASED,
+        paymentWon ? 2 : 0,
+      );
+      expect(
+        await db
+          .getRepository(MockPaymentEvent)
+          .existsBy({ eventId: payload.eventId }),
+      ).toBe(paymentWon);
+    }, 15000);
+
+    it('serializes cancellation against a concurrent failed payment callback', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      const payload = event(payment, PaymentStatus.FAILED);
+      const [cancelled, failed] = await contendForOrderLock(orderId, [
+        cancel(orderId),
+        callback(payload),
+      ]);
+      expect(cancelled.status).toBe(200);
+      expect([200, 409]).toContain(failed.status);
+      const failureRecorded = failed.status === 200;
+      await expectState(
+        orderId,
+        OrderStatus.CANCELLED,
+        payment.providerRef,
+        failureRecorded ? PaymentStatus.FAILED : PaymentStatus.PENDING,
+      );
+      await expectOrderStock(
+        orderId,
+        OrderStatus.CANCELLED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+      expect(
+        await db
+          .getRepository(MockPaymentEvent)
+          .existsBy({ eventId: payload.eventId }),
+      ).toBe(failureRecorded);
+    }, 15000);
+
+    it('rejects new payment sessions and both late callback outcomes after cancellation', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      await cancel(orderId).expect(200);
+      await session(orderId).expect(409);
+      const success = event(payment);
+      const failure = event(payment, PaymentStatus.FAILED);
+      await callback(success).expect(409);
+      await callback(failure).expect(409);
+      await expectState(
+        orderId,
+        OrderStatus.CANCELLED,
+        payment.providerRef,
+        PaymentStatus.PENDING,
+      );
+      await expectOrderStock(
+        orderId,
+        OrderStatus.CANCELLED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+      expect(
+        await db
+          .getRepository(MockPaymentEvent)
+          .countBy({ eventId: In([success.eventId, failure.eventId]) }),
+      ).toBe(0);
+    });
+
+    it('still deduplicates a previously accepted failure after cancellation', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      const failure = event(payment, PaymentStatus.FAILED);
+      await callback(failure).expect(200);
+      await cancel(orderId).expect(200);
+      const replay = await callback(failure).expect(200);
+      expect(replay.body).toHaveProperty('data.duplicate', true);
+      await expectState(
+        orderId,
+        OrderStatus.CANCELLED,
+        payment.providerRef,
+        PaymentStatus.FAILED,
+      );
+    });
+
+    it.each(['reservation release', 'order update'] as const)(
+      'rolls back cancellation and stock changes when PostgreSQL rejects the %s',
+      async (operation) => {
+        const { orderId } = await checkout();
+        const reservation = await reservationFor(orderId);
+        const release = operation === 'reservation release';
+        const table = release ? 'stock_reservations' : 'orders';
+        const id = release ? reservation.id : orderId;
+        const status = release
+          ? StockReservationStatus.RELEASED
+          : OrderStatus.CANCELLED;
+        // The UUID comes from the fixture; the constraint only blocks that row.
+        await db.query(`ALTER TABLE ${table} ADD CONSTRAINT ck_cancel_test_write
+          CHECK (id <> '${id}'::uuid OR status <> '${status}') NOT VALID`);
+        try {
+          await cancel(orderId).expect(500);
+          await expectOrderStock(
+            orderId,
+            OrderStatus.PENDING_PAYMENT,
+            StockReservationStatus.ACTIVE,
+            2,
+          );
+          expect(await reservationFor(orderId)).toEqual(reservation);
+        } finally {
+          await db.query(
+            `ALTER TABLE ${table} DROP CONSTRAINT ck_cancel_test_write`,
+          );
+        }
+        await cancel(orderId).expect(200);
+        await expectOrderStock(
+          orderId,
+          OrderStatus.CANCELLED,
+          StockReservationStatus.RELEASED,
+          0,
+        );
+      },
+      15000,
+    );
+
+    it('documents the cancellation endpoint, bearer authentication, and conflicts', async () => {
+      const docs = await api().get('/api/docs-json').expect(200);
+      const operation = ['paths', cancellationPath('{id}'), 'post'];
+      expect(docs.body).toHaveProperty(
+        [...operation, 'security'],
+        [{ bearer: [] }],
+      );
+      expect(docs.body).toHaveProperty([...operation, 'responses', '200']);
+      expect(docs.body).toHaveProperty([...operation, 'responses', '409']);
+    });
   });
 
   it('rate-limits callbacks from the same peer despite different forwarded IP headers', async () => {

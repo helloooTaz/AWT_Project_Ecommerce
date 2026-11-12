@@ -25,6 +25,7 @@ import {
 } from '../../src/modules/inventory/inventory.service';
 import { OrderItem } from '../../src/modules/orders/entities/order-item.entity';
 import { Order } from '../../src/modules/orders/entities/order.entity';
+import { OrdersService } from '../../src/modules/orders/orders.service';
 import { User } from '../../src/modules/users/entities/user.entity';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -348,6 +349,34 @@ describeWithPostgres('Checkout dependencies with PostgreSQL', () => {
     }
     expect(await balance(low)).toMatchObject({ onHand: 3, reserved: 2 });
     expect(await countReservations()).toBe(0);
+  });
+
+  it('releases multiple variants and aggregates their active reservation quantities', async () => {
+    const first = await createStock(7, 1);
+    const second = await createStock(5);
+    const order = await createOrder(db.manager, [
+      { variant: first, quantity: 2 },
+      { variant: second, quantity: 2 },
+      { variant: first, quantity: 1 },
+    ]);
+    await reserve(order.items);
+    await expect(
+      inventory.releaseForOrder(db.manager, order.id),
+    ).rejects.toThrow('active transaction');
+
+    await db.transaction(async (manager) => {
+      await module.get(OrdersService).lockForUpdate(manager, order.id);
+      await inventory.releaseForOrder(manager, order.id);
+    });
+
+    expect(await balance(first)).toMatchObject({ onHand: 7, reserved: 1 });
+    expect(await balance(second)).toMatchObject({ onHand: 5, reserved: 0 });
+    expect(
+      await db.getRepository(StockReservation).countBy({
+        orderItemId: In(order.items.map(({ orderItemId }) => orderItemId)),
+        status: StockReservationStatus.RELEASED,
+      }),
+    ).toBe(3);
   });
 
   it('rejects repeated order item IDs without partially reserving another item', async () => {

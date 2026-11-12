@@ -85,7 +85,8 @@ export class OrdersService {
     });
   }
 
-  async lockForPayment(manager: EntityManager, id: string, userId?: string) {
+  /** Lock the order before payment, cancellation, or reservation changes. */
+  async lockForUpdate(manager: EntityManager, id: string, userId?: string) {
     const order = await manager.getRepository(Order).findOne({
       where: userId === undefined ? { id } : { id, userId },
       lock: { mode: 'pessimistic_write' },

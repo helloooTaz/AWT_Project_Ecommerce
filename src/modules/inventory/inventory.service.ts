@@ -81,15 +81,9 @@ export class InventoryService {
     }
 
     const balances = manager.getRepository(InventoryBalance);
-    // PostgreSQL locks the rows in this order even when callers pass mixed order.
-    const lockedBalances = await balances.find({
-      where: { variantId: In([...quantityByVariant.keys()]) },
-      order: { variantId: 'ASC' },
-      lock: { mode: 'pessimistic_write' },
-    });
-    const balancesByVariant = new Map(
-      lockedBalances.map((balance) => [balance.variantId, balance]),
-    );
+    const balancesByVariant = await this.lockBalancesByVariant(balances, [
+      ...quantityByVariant.keys(),
+    ]);
     const updates = [...quantityByVariant].map(([variantId, quantity]) => {
       const balance = balancesByVariant.get(variantId);
       if (!balance || balance.onHand - balance.reserved < quantity) {
@@ -125,5 +119,82 @@ export class InventoryService {
     for (const { id, reserved } of updates) {
       await balances.update(id, { reserved });
     }
+  }
+
+  /** The caller holds the order lock in this transaction. */
+  async releaseForOrder(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<void> {
+    if (!manager.queryRunner?.isTransactionActive) {
+      throw new Error(
+        'Stock reservation release requires an active transaction',
+      );
+    }
+
+    const reservations = manager.getRepository(StockReservation);
+    const active = await reservations
+      .createQueryBuilder('reservation')
+      .innerJoin('reservation.orderItem', 'item')
+      .where('item.orderId = :orderId', { orderId })
+      .andWhere('reservation.status = :status', {
+        status: StockReservationStatus.ACTIVE,
+      })
+      .orderBy('reservation.orderItemId', 'ASC')
+      .setLock('pessimistic_write', undefined, ['reservation'])
+      .getMany();
+    if (active.length === 0) {
+      return;
+    }
+
+    const quantityByVariant = new Map<string, number>();
+    for (const { variantId, quantity } of active) {
+      quantityByVariant.set(
+        variantId,
+        (quantityByVariant.get(variantId) ?? 0) + quantity,
+      );
+    }
+
+    const balances = manager.getRepository(InventoryBalance);
+    const balancesByVariant = await this.lockBalancesByVariant(balances, [
+      ...quantityByVariant.keys(),
+    ]);
+    const updates = [...quantityByVariant].map(([variantId, quantity]) => {
+      const balance = balancesByVariant.get(variantId);
+      if (!balance || balance.reserved < quantity) {
+        throw new ConflictException('Reserved stock could not be released');
+      }
+      return { id: balance.id, reserved: balance.reserved - quantity };
+    });
+    for (const { id, reserved } of updates) {
+      const result = await balances.update(id, { reserved });
+      if (result.affected !== 1) {
+        throw new ConflictException('Reserved stock could not be released');
+      }
+    }
+
+    const result = await reservations.update(
+      {
+        id: In(active.map(({ id }) => id)),
+        status: StockReservationStatus.ACTIVE,
+      },
+      { status: StockReservationStatus.RELEASED },
+    );
+    if (result.affected !== active.length) {
+      throw new ConflictException('Stock reservations could not be released');
+    }
+  }
+
+  private async lockBalancesByVariant(
+    balances: Repository<InventoryBalance>,
+    variantIds: string[],
+  ) {
+    // PostgreSQL locks rows in variant order even when callers pass mixed order.
+    const locked = await balances.find({
+      where: { variantId: In(variantIds) },
+      order: { variantId: 'ASC' },
+      lock: { mode: 'pessimistic_write' },
+    });
+    return new Map(locked.map((balance) => [balance.variantId, balance]));
   }
 }
