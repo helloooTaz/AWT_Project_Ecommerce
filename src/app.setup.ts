@@ -15,6 +15,7 @@ export function configureApp(
     const options = new DocumentBuilder()
       .setTitle('THREAD Commerce API')
       .setVersion('1.0')
+      .addBearerAuth()
       .build();
 
     SwaggerModule.setup('api/docs', app, () =>
