@@ -40,4 +40,12 @@ export class UsersService {
       select: { id: true, role: true },
     });
   }
+
+  async updateActiveFullName(id: string, fullName: string): Promise<boolean> {
+    const { affected } = await this.users.update(
+      { id, status: UserStatus.ACTIVE },
+      { fullName },
+    );
+    return affected === 1;
+  }
 }

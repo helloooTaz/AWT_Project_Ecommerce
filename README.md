@@ -58,6 +58,10 @@ For a compiled run, use `npm run build`, `npm run db:migrate:prod` and `npm run 
 
 Reuse the canonical `User` and `UsersService` in `src/modules/users`, the roles in `src/modules/roles`, and the guards exported by `AuthModule`. Apply `JwtAuthGuard` before `RolesGuard` on role-protected routes and declare allowed roles with `@Roles([...])`. The JWT has a UUID `sub` and a one-hour expiry. Authentication reads the active user and current role from the database and makes the typed identity available through `@CurrentUser()`. The address foreign key restricts hard deletion of users with addresses.
 
+## Profile update demo
+
+Send `PATCH /api/v1/users/me` with a bearer token and a body such as `{"fullName":"Samira Rahman"}`. Any active authenticated account can update its own name. The API trims surrounding whitespace and returns the account ID and updated name in `data`.
+
 ## Verification
 
 ```sh
@@ -66,4 +70,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the address suite, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. The suite starts the full app with a generated JWT secret, creates its own accounts and addresses, and cleans up those fixtures. Jest skips that suite when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile and address suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite starts the full app with a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
