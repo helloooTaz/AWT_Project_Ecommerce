@@ -62,10 +62,24 @@ Reuse the canonical `User` and `UsersService` in `src/modules/users`, the roles 
 
 Send `PATCH /api/v1/users/me` with a bearer token and a body such as `{"fullName":"Samira Rahman"}`. Any active authenticated account can update its own name. The API trims surrounding whitespace and returns the account ID and updated name in `data`.
 
-## Catalog and Inventory handoff
+## Shopping cart
 
-- Staff should reuse the canonical `Category`, `Product`, and `ProductVariant` entities from `CreateCartCatalog1794470400002`. The category table is required by the product foreign key. Cart can use the batched `CatalogService.findVariantsWithProducts` lookup and the published/active rule in `CatalogService.isPurchasable`. Staff owns catalog writes and the future transaction-aware checkout lookup.
+Use a `CUSTOMER` bearer token and the UUID of an active variant on a published product.
+
+| Method and path | Request and result |
+| --- | --- |
+| `GET /api/v1/me/cart` | List the caller's cart with current BDT prices in minor units, stock availability, and subtotal. An empty cart returns an empty list and a zero subtotal. |
+| `POST /api/v1/me/cart/items` | Add `{"variantId":"<variant UUID>","quantity":2}`. Creates the cart on the first add. Returns 201, or 409 if the variant is already in the cart. |
+| `PATCH /api/v1/me/cart/items/:itemId` | Update with `{"quantity":3}`. Returns 200, or 404 for an item outside the caller's cart. |
+| `DELETE /api/v1/me/cart/items/:itemId` | Remove the item. Returns 204, or 404 for an item outside the caller's cart. |
+
+Each line shows `availableQuantity` and `canPurchase`. A line stays visible when stock runs short or its product or variant becomes unavailable. The subtotal includes all priced lines at their current price. It is `null` if the amount exceeds JavaScript's safe integer range. Cart operations leave inventory balances untouched. The PostgreSQL integration suite provides catalog and stock fixtures for exercising the full flow.
+
+### Catalog and Inventory handoff
+
+- Staff should reuse the canonical `Category`, `Product`, and `ProductVariant` entities from `CreateCartCatalog1794470400002`. The category table is required by the product foreign key. Cart uses the batched `CatalogService.findVariantsWithProducts` lookup and the published/active rule in `CatalogService.isPurchasable`. Staff owns catalog writes and the future transaction-aware checkout lookup.
 - Inventory should extend the canonical `InventoryBalance` from `CreateInventoryBalances1794470400003`. `InventoryService.getAvailability` reads `onHand - reserved` by variant and returns zero for a missing balance. Inventory owns stock writes and the future reservation operations.
+- `CreateCarts1794470400004` enforces one cart per user and one line per variant per cart. Cart lines keep a reference to the canonical variant and read its price on demand.
 
 ## Verification
 
@@ -75,4 +89,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the profile and address suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite starts the full app with a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile, address, and cart suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite starts the full app with a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
