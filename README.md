@@ -77,9 +77,15 @@ Each line shows `availableQuantity` and `canPurchase`. A line stays visible when
 
 ### Catalog and Inventory handoff
 
-- Staff should reuse the canonical `Category`, `Product`, and `ProductVariant` entities from `CreateCartCatalog1794470400002`. The category table is required by the product foreign key. Cart uses the batched `CatalogService.findVariantsWithProducts` lookup and the published/active rule in `CatalogService.isPurchasable`. Staff owns catalog writes and the future transaction-aware checkout lookup.
-- Inventory should extend the canonical `InventoryBalance` from `CreateInventoryBalances1794470400003`. `InventoryService.getAvailability` reads `onHand - reserved` by variant and returns zero for a missing balance. Inventory owns stock writes and the future reservation operations.
+- Staff owns the canonical `Category`, `Product`, and `ProductVariant` entities from `CreateCartCatalog1794470400002`. Cart uses the batched `CatalogService.findVariantsWithProducts` lookup and the published/active rule in `CatalogService.isPurchasable`.
+- Inventory owns `InventoryBalance` from `CreateInventoryBalances1794470400003`. `InventoryService.getAvailability` reads `onHand - reserved` by variant and returns zero for a missing balance.
 - `CreateCarts1794470400004` enforces one cart per user and one line per variant per cart. Cart lines keep a reference to the canonical variant and read its price on demand.
+
+### Checkout service dependencies
+
+- `CatalogService.getPurchasableVariants(manager, variantIds)` reads through the caller's TypeORM manager. It returns results in input order with variant and product IDs, product name and status, SKU, size, color, and `priceMinor` as a decimal string. Repeated IDs return 400. Missing, inactive, or unpublished variants return 404.
+- `InventoryService.reserveForOrder(manager, items, reservationExpiresAt)` expects an active transaction and item records with `orderItemId`, `variantId`, and `quantity` matching the order items in that transaction. It locks balance rows by ascending variant ID, checks the combined requested quantity per variant, inserts an `ACTIVE` reservation per item, and increments `reserved`. Insufficient stock or a duplicate reservation returns 409. The caller owns commit and rollback.
+- `CreateStockReservations1794470400006` adds `stock_reservations` after the Orders migration. Its unique order-item foreign key allows one reservation per line, and the status/expiry index supports future expiry processing. Reservations change the reserved quantity. Stock-movement events apply to stock receipt and adjustment.
 
 ## Customer order history
 
@@ -102,4 +108,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the profile, address, cart, and order-history suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite starts the full app with a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile, address, cart, order-history, and checkout dependency suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.

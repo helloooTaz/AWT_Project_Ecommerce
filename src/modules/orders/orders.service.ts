@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository, type EntityManager } from 'typeorm';
 import type { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { orderDetail, orderSummary } from './dto/order-response';
+import { OrderItem } from './entities/order-item.entity';
 import { Order } from './entities/order.entity';
 
 const summaryColumns = {
@@ -53,5 +54,15 @@ export class OrdersService {
       where: { id },
     });
     return order ? orderSummary(order) : null;
+  }
+
+  async findItemsForReservation(
+    manager: EntityManager,
+    orderItemIds: string[],
+  ): Promise<Pick<OrderItem, 'id' | 'variantId' | 'quantity'>[]> {
+    return manager.getRepository(OrderItem).find({
+      select: { id: true, variantId: true, quantity: true },
+      where: { id: In(orderItemIds) },
+    });
   }
 }
