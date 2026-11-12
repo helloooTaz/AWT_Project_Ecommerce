@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { validateEnvironment, type Environment } from './config/env.validation';
 import { databaseOptions } from './database/database.options';
 import { HealthController } from './health.controller';
+import { AddressesModule } from './modules/addresses/addresses.module';
 import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
@@ -15,6 +16,7 @@ import { AuthModule } from './modules/auth/auth.module';
         databaseOptions(config.get('DATABASE_URL', { infer: true })),
     }),
     AuthModule,
+    AddressesModule,
   ],
   controllers: [HealthController],
 })
