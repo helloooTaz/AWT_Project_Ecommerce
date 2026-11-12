@@ -30,8 +30,10 @@ export class AddressesService {
     };
   }
 
-  async get(userId: string, id: string) {
-    const address = await this.addresses.findOneBy({ id, userId });
+  async get(userId: string, id: string, manager = this.addresses.manager) {
+    const address = await manager
+      .getRepository(Address)
+      .findOneBy({ id, userId });
     if (!address) {
       throw new NotFoundException('Address not found');
     }

@@ -4,7 +4,18 @@ import { In, Repository, type EntityManager } from 'typeorm';
 import type { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { orderDetail, orderSummary } from './dto/order-response';
 import { OrderItem } from './entities/order-item.entity';
-import { Order } from './entities/order.entity';
+import { Order, OrderStatus } from './entities/order.entity';
+
+type PendingOrderItem = Pick<
+  OrderItem,
+  | 'skuSnapshot'
+  | 'nameSnapshot'
+  | 'sizeSnapshot'
+  | 'colorSnapshot'
+  | 'unitPriceMinor'
+  | 'quantity'
+  | 'lineTotalMinor'
+> & { variantId: string };
 
 const summaryColumns = {
   id: true,
@@ -64,5 +75,21 @@ export class OrdersService {
       select: { id: true, variantId: true, quantity: true },
       where: { id: In(orderItemIds) },
     });
+  }
+
+  async createPendingOrder(
+    manager: EntityManager,
+    input: Pick<Order, 'userId' | 'shippingAddressSnapshot' | 'totalMinor'>,
+    items: PendingOrderItem[],
+  ) {
+    const order = await manager.getRepository(Order).save({
+      ...input,
+      status: OrderStatus.PENDING_PAYMENT,
+      currency: 'BDT',
+    });
+    const savedItems = await manager
+      .getRepository(OrderItem)
+      .save(items.map((item) => ({ ...item, orderId: order.id })));
+    return { order, items: savedItems };
   }
 }

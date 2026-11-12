@@ -100,6 +100,16 @@ Amounts such as `totalMinor`, `unitPriceMinor`, and `lineTotalMinor` are decimal
 
 `CreateOrders1794470400005` creates `orders`, `order_items`, and the `order_status` enum after the account and catalog tables. The Orders service is exported for other backend modules and provides a summary lookup by ID for trusted callers such as fulfillment. Apply the migrations and use the PostgreSQL order-history tests to exercise populated orders with fixtures. A newly registered customer sees empty history until orders are recorded.
 
+## Checkout
+
+Send `POST /api/v1/checkout` with a `CUSTOMER` bearer token, an `Idempotency-Key` header, and a body such as `{"addressId":"6268504d-c404-4730-9abb-9e8bd527f06a"}`. Keys are case-sensitive and accept 1–128 ASCII letters, digits, dots, underscores, or hyphens.
+
+- **201 Created** returns `data.orderId`, `status: "PENDING_PAYMENT"`, `currency: "BDT"`, and `totalMinor` as a decimal string. The order appears in customer order history.
+- **200 OK** returns the existing order and its current status when the customer repeats the key with the same address UUID. The SHA-256 fingerprint uses the normalized address UUID. A replay works after the cart is cleared or changes and leaves any new items in place.
+- **400 Bad Request** covers invalid input or an empty cart. **404 Not Found** covers an address outside the caller's account or a variant that is unavailable for purchase. **409 Conflict** covers insufficient stock, an unsupported total, or reusing a completed key with another address.
+
+Checkout owns one PostgreSQL transaction. It locks the customer's cart row and purchased lines, reads authoritative catalog prices, saves the address and product snapshots, reserves stock for 15 minutes, records the key, and clears the purchased items. A failure rolls back the order, reservation, key, and cart changes together. `CreateIdempotencyRecords1794470400007` enforces one record per customer and key.
+
 ## Verification
 
 ```sh
@@ -108,4 +118,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the profile, address, cart, order-history, and checkout dependency suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile, address, cart, order-history, checkout dependency, and checkout suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. Jest skips these suites when `TEST_DATABASE_URL` is unset.

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository, type EntityManager } from 'typeorm';
 import { CatalogService } from '../catalog/catalog.service';
 import { InventoryService } from '../inventory/inventory.service';
 import type { AddCartItemDto } from './dto/add-cart-item.dto';
@@ -134,6 +134,35 @@ export class CartService {
     if (!affected) {
       throw new NotFoundException('Cart item not found');
     }
+  }
+
+  async lockForCheckout(manager: EntityManager, userId: string) {
+    const cart = await manager.getRepository(Cart).findOne({
+      select: { id: true },
+      where: { userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    return cart?.id;
+  }
+
+  getCheckoutItems(
+    manager: EntityManager,
+    cartId: string,
+  ): Promise<Pick<CartItem, 'id' | 'variantId' | 'quantity'>[]> {
+    return manager.getRepository(CartItem).find({
+      select: { id: true, variantId: true, quantity: true },
+      where: { cartId },
+      order: { id: 'ASC' },
+      lock: { mode: 'pessimistic_write' },
+    });
+  }
+
+  async clearPurchasedItems(
+    manager: EntityManager,
+    cartId: string,
+    itemIds: string[],
+  ): Promise<void> {
+    await manager.getRepository(CartItem).delete({ cartId, id: In(itemIds) });
   }
 
   private async getOwnedItem(userId: string, id: string): Promise<CartItem> {
