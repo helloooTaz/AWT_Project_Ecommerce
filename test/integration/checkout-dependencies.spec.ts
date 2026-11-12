@@ -24,7 +24,11 @@ import {
   type StockReservationItem,
 } from '../../src/modules/inventory/inventory.service';
 import { OrderItem } from '../../src/modules/orders/entities/order-item.entity';
-import { Order } from '../../src/modules/orders/entities/order.entity';
+import {
+  Order,
+  OrderStatus,
+} from '../../src/modules/orders/entities/order.entity';
+import { OrderExpiryService } from '../../src/modules/orders/order-expiry.service';
 import { OrdersService } from '../../src/modules/orders/orders.service';
 import { User } from '../../src/modules/users/entities/user.entity';
 
@@ -369,6 +373,36 @@ describeWithPostgres('Checkout dependencies with PostgreSQL', () => {
       await inventory.releaseForOrder(manager, order.id);
     });
 
+    expect(await balance(first)).toMatchObject({ onHand: 7, reserved: 1 });
+    expect(await balance(second)).toMatchObject({ onHand: 5, reserved: 0 });
+    expect(
+      await db.getRepository(StockReservation).countBy({
+        orderItemId: In(order.items.map(({ orderItemId }) => orderItemId)),
+        status: StockReservationStatus.RELEASED,
+      }),
+    ).toBe(3);
+  });
+
+  it('expires all lines together when the first reservation deadline elapses', async () => {
+    const first = await createStock(7, 1);
+    const second = await createStock(5);
+    const order = await createOrder(db.manager, [
+      { variant: first, quantity: 2 },
+      { variant: second, quantity: 2 },
+      { variant: first, quantity: 1 },
+    ]);
+    await reserve(order.items);
+    await db.query(
+      'UPDATE stock_reservations SET expires_at = clock_timestamp() WHERE order_item_id = $1',
+      [order.items[0].orderItemId],
+    );
+
+    expect(await module.get(OrderExpiryService).expireOrder(order.id)).toBe(
+      true,
+    );
+    expect(
+      await db.getRepository(Order).findOneByOrFail({ id: order.id }),
+    ).toMatchObject({ status: OrderStatus.EXPIRED });
     expect(await balance(first)).toMatchObject({ onHand: 7, reserved: 1 });
     expect(await balance(second)).toMatchObject({ onHand: 5, reserved: 0 });
     expect(

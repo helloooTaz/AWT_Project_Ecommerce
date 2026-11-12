@@ -75,4 +75,39 @@ describe('environment configuration', () => {
       }),
     ).toMatchObject({ PAYMENT_PROVIDER: 'DISABLED' });
   });
+
+  it('sets expiry defaults and disables automatic polling by default in tests', () => {
+    expect(validateEnvironment({ DATABASE_URL, JWT_SECRET })).toMatchObject({
+      ORDER_EXPIRY_ENABLED: true,
+      ORDER_EXPIRY_POLL_INTERVAL_MS: 60_000,
+      ORDER_EXPIRY_BATCH_SIZE: 25,
+    });
+    expect(
+      validateEnvironment({ DATABASE_URL, JWT_SECRET, NODE_ENV: 'test' }),
+    ).toMatchObject({ ORDER_EXPIRY_ENABLED: false });
+    expect(
+      validateEnvironment({
+        DATABASE_URL,
+        JWT_SECRET,
+        NODE_ENV: 'test',
+        ORDER_EXPIRY_ENABLED: 'true',
+        ORDER_EXPIRY_POLL_INTERVAL_MS: '1000',
+        ORDER_EXPIRY_BATCH_SIZE: '1',
+      }),
+    ).toMatchObject({
+      ORDER_EXPIRY_ENABLED: true,
+      ORDER_EXPIRY_POLL_INTERVAL_MS: 1000,
+      ORDER_EXPIRY_BATCH_SIZE: 1,
+    });
+    expect(() =>
+      validateEnvironment({
+        DATABASE_URL,
+        JWT_SECRET,
+        ORDER_EXPIRY_POLL_INTERVAL_MS: '0',
+        ORDER_EXPIRY_BATCH_SIZE: '101',
+      }),
+    ).toThrow(
+      'Invalid environment configuration: ORDER_EXPIRY_POLL_INTERVAL_MS, ORDER_EXPIRY_BATCH_SIZE',
+    );
+  });
 });

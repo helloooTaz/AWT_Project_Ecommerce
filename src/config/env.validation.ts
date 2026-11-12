@@ -7,6 +7,9 @@ export interface Environment {
   SWAGGER_ENABLED: boolean;
   PAYMENT_PROVIDER: 'DISABLED' | 'MOCK';
   MOCK_PAYMENT_SIGNING_SECRET?: string;
+  ORDER_EXPIRY_ENABLED: boolean;
+  ORDER_EXPIRY_POLL_INTERVAL_MS: number;
+  ORDER_EXPIRY_BATCH_SIZE: number;
 }
 
 const databaseUrlSchema = Joi.string()
@@ -24,6 +27,17 @@ const schema = Joi.object<Environment>({
     then: Joi.string().trim().min(32).invalid(Joi.ref('JWT_SECRET')).required(),
     otherwise: Joi.string().allow(''),
   }),
+  ORDER_EXPIRY_ENABLED: Joi.when('NODE_ENV', {
+    is: Joi.valid('test').required(),
+    then: Joi.boolean().default(false),
+    otherwise: Joi.boolean().default(true),
+  }),
+  ORDER_EXPIRY_POLL_INTERVAL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .max(3_600_000)
+    .default(60_000),
+  ORDER_EXPIRY_BATCH_SIZE: Joi.number().integer().min(1).max(100).default(25),
 });
 
 export function validateDatabaseUrl(value: unknown): string {

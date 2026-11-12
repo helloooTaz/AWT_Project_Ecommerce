@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { INestApplication } from '@nestjs/common';
+import { Logger, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -29,6 +29,8 @@ import {
   Order,
   OrderStatus,
 } from '../../src/modules/orders/entities/order.entity';
+import { OrderExpiryScheduler } from '../../src/modules/orders/order-expiry.scheduler';
+import { OrderExpiryService } from '../../src/modules/orders/order-expiry.service';
 import { OrdersService } from '../../src/modules/orders/orders.service';
 import type { MockPaymentEventDto } from '../../src/modules/payments/dto/mock-payment-event.dto';
 import { MockPaymentEvent } from '../../src/modules/payments/entities/mock-payment-event.entity';
@@ -177,12 +179,12 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
     ).toMatchObject({ status: paymentStatus });
   }
 
-  async function contendForOrderLock(
+  async function contendForOrderLock<T>(
     orderId: string,
-    requests: request.Test[],
+    start: () => Promise<T>,
   ) {
     const blocker = db.createQueryRunner();
-    let pending: Promise<PromiseSettledResult<request.Response>[]>;
+    let pending: Promise<PromiseSettledResult<T>[]>;
     let waiters = 0;
     try {
       await blocker.startTransaction();
@@ -190,12 +192,8 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       const [{ pid }] = await blocker.manager.query<{ pid: number }[]>(
         'SELECT pg_backend_pid() AS pid',
       );
-      pending = Promise.allSettled(requests);
-      for (
-        let attempt = 0;
-        attempt < 150 && waiters < requests.length;
-        attempt++
-      ) {
+      pending = Promise.allSettled([start()]);
+      for (let attempt = 0; attempt < 150 && waiters < 2; attempt++) {
         const [{ count }] = await db.query<{ count: number }[]>(
           `WITH RECURSIVE blocked(pid) AS (
              SELECT $1::int
@@ -210,18 +208,16 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
           [pid],
         );
         waiters = count;
-        if (waiters < requests.length) await delay(20);
+        if (waiters < 2) await delay(20);
       }
     } finally {
       if (blocker.isTransactionActive) await blocker.rollbackTransaction();
       await blocker.release();
     }
-    const responses = (await pending).map((result) => {
-      if (result.status === 'rejected') throw result.reason;
-      return result.value;
-    });
-    expect(waiters).toBeGreaterThanOrEqual(requests.length);
-    return responses;
+    const [result] = await pending;
+    if (result.status === 'rejected') throw result.reason;
+    expect(waiters).toBeGreaterThanOrEqual(2);
+    return result.value;
   }
 
   beforeAll(async () => {
@@ -231,6 +227,8 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       JWT_SECRET: randomBytes(32).toString('hex'),
       PAYMENT_PROVIDER: 'MOCK',
       MOCK_PAYMENT_SIGNING_SECRET: secret,
+      ORDER_EXPIRY_ENABLED: 'false',
+      ORDER_EXPIRY_BATCH_SIZE: '25',
     });
     const { AppModule } = await import('../../src/app.module');
     const module = await Test.createTestingModule({
@@ -521,10 +519,9 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
     const payment = await openPayment(orderId);
     const success = event(payment);
     const failure = event(payment, PaymentStatus.FAILED);
-    const [paid, failed] = await contendForOrderLock(orderId, [
-      callback(success),
-      callback(failure),
-    ]);
+    const [paid, failed] = await contendForOrderLock(orderId, () =>
+      Promise.all([callback(success), callback(failure)]),
+    );
     expect([paid.status, failed.status].sort()).toEqual([200, 409]);
     const accepted = paid.status === 200 ? success : failure;
     const orderStatus =
@@ -777,10 +774,9 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
 
     it('releases stock once when two cancellation requests contend on the order lock', async () => {
       const { orderId } = await checkout();
-      const responses = await contendForOrderLock(orderId, [
-        cancel(orderId),
-        cancel(orderId),
-      ]);
+      const responses = await contendForOrderLock(orderId, () =>
+        Promise.all([cancel(orderId), cancel(orderId)]),
+      );
       expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
       await expectOrderStock(
         orderId,
@@ -794,10 +790,9 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       const { orderId } = await checkout();
       const payment = await openPayment(orderId);
       const payload = event(payment);
-      const [cancelled, paid] = await contendForOrderLock(orderId, [
-        cancel(orderId),
-        callback(payload),
-      ]);
+      const [cancelled, paid] = await contendForOrderLock(orderId, () =>
+        Promise.all([cancel(orderId), callback(payload)]),
+      );
       expect([cancelled.status, paid.status].sort()).toEqual([200, 409]);
       const paymentWon = paid.status === 200;
       const orderStatus = paymentWon
@@ -828,10 +823,9 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       const { orderId } = await checkout();
       const payment = await openPayment(orderId);
       const payload = event(payment, PaymentStatus.FAILED);
-      const [cancelled, failed] = await contendForOrderLock(orderId, [
-        cancel(orderId),
-        callback(payload),
-      ]);
+      const [cancelled, failed] = await contendForOrderLock(orderId, () =>
+        Promise.all([cancel(orderId), callback(payload)]),
+      );
       expect(cancelled.status).toBe(200);
       expect([200, 409]).toContain(failed.status);
       const failureRecorded = failed.status === 200;
@@ -947,6 +941,345 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       expect(docs.body).toHaveProperty([...operation, 'responses', '200']);
       expect(docs.body).toHaveProperty([...operation, 'responses', '409']);
     });
+  });
+
+  describe('Automatic order expiry', () => {
+    async function reachDeadline(orderId: string) {
+      const { id } = await reservationFor(orderId);
+      await db.query(
+        'UPDATE stock_reservations SET expires_at = clock_timestamp() WHERE id = $1',
+        [id],
+      );
+    }
+
+    it('expires unpaid orders at their reservation deadline and leaves future orders alone', async () => {
+      const due = await checkout();
+      const future = await checkout();
+      await reachDeadline(due.orderId);
+      const worker = app.get(OrderExpiryService);
+      expect(await worker.processBatch()).toBe(1);
+      expect(await worker.processBatch()).toBe(0);
+      await expectOrderStock(
+        due.orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        2,
+      );
+      await expectOrderStock(
+        future.orderId,
+        OrderStatus.PENDING_PAYMENT,
+        StockReservationStatus.ACTIVE,
+        2,
+      );
+    });
+
+    it('picks up an existing overdue order when scheduling starts', async () => {
+      const { orderId } = await checkout();
+      await reachDeadline(orderId);
+      const config = app.get<ConfigService<Environment, true>>(ConfigService);
+      const scheduler = app.get(OrderExpiryScheduler);
+      config.set('ORDER_EXPIRY_ENABLED', true);
+      try {
+        scheduler.onApplicationBootstrap();
+        await scheduler.onModuleDestroy();
+      } finally {
+        config.set('ORDER_EXPIRY_ENABLED', false);
+      }
+      await expectOrderStock(
+        orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    });
+
+    it.each([
+      OrderStatus.CONFIRMED,
+      OrderStatus.CANCELLED,
+      OrderStatus.EXPIRED,
+      OrderStatus.PROCESSING,
+      OrderStatus.SHIPPED,
+      OrderStatus.DELIVERED,
+    ])(
+      'leaves %s orders alone even when their reservations have elapsed',
+      async (status) => {
+        const { orderId } = await checkout();
+        await db.getRepository(Order).update(orderId, { status });
+        await reachDeadline(orderId);
+        const worker = app.get(OrderExpiryService);
+        expect(await worker.processBatch()).toBe(0);
+        expect(await worker.expireOrder(orderId)).toBe(false);
+        await expectOrderStock(
+          orderId,
+          status,
+          StockReservationStatus.ACTIVE,
+          2,
+        );
+      },
+    );
+
+    it('rejects a new payment session, late callbacks, and cancellation after expiry', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      const acceptedFailure = event(payment, PaymentStatus.FAILED);
+      await callback(acceptedFailure).expect(200);
+      const pendingAttempt = await openPayment(orderId);
+      await reachDeadline(orderId);
+      expect(await app.get(OrderExpiryService).processBatch()).toBe(1);
+      await session(orderId).expect(409);
+      await cancel(orderId).expect(409);
+      const success = event(pendingAttempt);
+      const failure = event(pendingAttempt, PaymentStatus.FAILED);
+      await callback(success).expect(409);
+      await callback(failure).expect(409);
+      const replay = await callback(acceptedFailure).expect(200);
+      expect(replay.body).toHaveProperty('data.duplicate', true);
+      await expectState(
+        orderId,
+        OrderStatus.EXPIRED,
+        payment.providerRef,
+        PaymentStatus.FAILED,
+      );
+      await expectState(
+        orderId,
+        OrderStatus.EXPIRED,
+        pendingAttempt.providerRef,
+        PaymentStatus.PENDING,
+      );
+      await expectOrderStock(
+        orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+      expect(
+        await db
+          .getRepository(MockPaymentEvent)
+          .countBy({ eventId: In([success.eventId, failure.eventId]) }),
+      ).toBe(0);
+    });
+
+    it('rejects successful payment at the database deadline before the worker runs', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      await reachDeadline(orderId);
+      await callback(event(payment)).expect(409);
+      await expectState(
+        orderId,
+        OrderStatus.PENDING_PAYMENT,
+        payment.providerRef,
+        PaymentStatus.PENDING,
+      );
+      expect(await app.get(OrderExpiryService).processBatch()).toBe(1);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    });
+
+    it('releases stock once when two expiry workers contend for the same order', async () => {
+      const { orderId } = await checkout();
+      await reachDeadline(orderId);
+      const first = app.get(OrderExpiryService);
+      const second = new OrderExpiryService(
+        db,
+        app.get(OrdersService),
+        app.get(InventoryService),
+        app.get(ConfigService),
+      );
+      const results = await contendForOrderLock(orderId, () =>
+        Promise.all([first.processBatch(), second.processBatch()]),
+      );
+      expect(results.sort()).toEqual([0, 1]);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    }, 15000);
+
+    it.each(['before', 'after'] as const)(
+      'serializes expiry against a concurrent successful payment %s the deadline',
+      async (timing) => {
+        const { orderId } = await checkout();
+        const payment = await openPayment(orderId);
+        const due = timing === 'after';
+        if (due) await reachDeadline(orderId);
+        const [expired, paid] = await contendForOrderLock(orderId, () =>
+          Promise.all([
+            app.get(OrderExpiryService).expireOrder(orderId),
+            callback(event(payment)),
+          ]),
+        );
+        expect(expired).toBe(due);
+        expect(paid.status).toBe(due ? 409 : 200);
+        const status = due ? OrderStatus.EXPIRED : OrderStatus.CONFIRMED;
+        await expectState(
+          orderId,
+          status,
+          payment.providerRef,
+          due ? PaymentStatus.PENDING : PaymentStatus.PAID,
+        );
+        await expectOrderStock(
+          orderId,
+          status,
+          due ? StockReservationStatus.RELEASED : StockReservationStatus.ACTIVE,
+          due ? 0 : 2,
+        );
+      },
+      15000,
+    );
+
+    it('serializes expiry against a concurrent failed payment callback', async () => {
+      const { orderId } = await checkout();
+      const payment = await openPayment(orderId);
+      await reachDeadline(orderId);
+      const failure = event(payment, PaymentStatus.FAILED);
+      const [expired, failed] = await contendForOrderLock(orderId, () =>
+        Promise.all([
+          app.get(OrderExpiryService).expireOrder(orderId),
+          callback(failure),
+        ]),
+      );
+      expect(expired).toBe(true);
+      expect([200, 409]).toContain(failed.status);
+      const recorded = failed.status === 200;
+      await expectState(
+        orderId,
+        OrderStatus.EXPIRED,
+        payment.providerRef,
+        recorded ? PaymentStatus.FAILED : PaymentStatus.PENDING,
+      );
+      await expectOrderStock(
+        orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+      expect(
+        await db
+          .getRepository(MockPaymentEvent)
+          .existsBy({ eventId: failure.eventId }),
+      ).toBe(recorded);
+    }, 15000);
+
+    it('serializes expiry against concurrent cancellation without releasing twice', async () => {
+      const { orderId } = await checkout();
+      await reachDeadline(orderId);
+      const [expired, cancelled] = await contendForOrderLock(orderId, () =>
+        Promise.all([
+          app.get(OrderExpiryService).expireOrder(orderId),
+          cancel(orderId),
+        ]),
+      );
+      expect(cancelled.status).toBe(expired ? 409 : 200);
+      await expectOrderStock(
+        orderId,
+        expired ? OrderStatus.EXPIRED : OrderStatus.CANCELLED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    }, 15000);
+
+    it('respects the batch limit, rolls back a failed release, and retries it after other orders', async () => {
+      const config = app.get<ConfigService<Environment, true>>(ConfigService);
+      const limit = config.get('ORDER_EXPIRY_BATCH_SIZE', { infer: true });
+      const [blocked, healthy] = [
+        (await checkout()).orderId,
+        (await checkout()).orderId,
+      ].sort();
+      await reachDeadline(blocked);
+      await reachDeadline(healthy);
+      const reservation = await reservationFor(blocked);
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => {});
+      const worker = app.get(OrderExpiryService);
+      config.set('ORDER_EXPIRY_BATCH_SIZE', 1);
+      try {
+        await db.query(`ALTER TABLE stock_reservations ADD CONSTRAINT ck_expiry_test_release
+          CHECK (id <> '${reservation.id}'::uuid OR status <> 'RELEASED') NOT VALID`);
+        try {
+          expect(await worker.processBatch()).toBe(0);
+          expect(warn).toHaveBeenCalledWith(
+            'An order expiry transaction failed and will be retried',
+          );
+          expect(await reservationFor(blocked)).toEqual(reservation);
+          await expectOrderStock(
+            blocked,
+            OrderStatus.PENDING_PAYMENT,
+            StockReservationStatus.ACTIVE,
+            4,
+          );
+          await expectOrderStock(
+            healthy,
+            OrderStatus.PENDING_PAYMENT,
+            StockReservationStatus.ACTIVE,
+            4,
+          );
+
+          expect(await worker.processBatch()).toBe(1);
+          await expectOrderStock(
+            healthy,
+            OrderStatus.EXPIRED,
+            StockReservationStatus.RELEASED,
+            2,
+          );
+          await expectOrderStock(
+            blocked,
+            OrderStatus.PENDING_PAYMENT,
+            StockReservationStatus.ACTIVE,
+            2,
+          );
+        } finally {
+          await db.query(
+            'ALTER TABLE stock_reservations DROP CONSTRAINT ck_expiry_test_release',
+          );
+        }
+        expect(await worker.processBatch()).toBe(1);
+        await expectOrderStock(
+          blocked,
+          OrderStatus.EXPIRED,
+          StockReservationStatus.RELEASED,
+          0,
+        );
+      } finally {
+        config.set('ORDER_EXPIRY_BATCH_SIZE', limit);
+      }
+    }, 15000);
+
+    it('rolls back the release if PostgreSQL rejects the order transition', async () => {
+      const { orderId } = await checkout();
+      await reachDeadline(orderId);
+      const worker = app.get(OrderExpiryService);
+      await db.query(`ALTER TABLE orders ADD CONSTRAINT ck_expiry_test_order
+        CHECK (id <> '${orderId}'::uuid OR status <> 'EXPIRED') NOT VALID`);
+      try {
+        await expect(worker.expireOrder(orderId)).rejects.toMatchObject({
+          driverError: { code: '23514' },
+        });
+        await expectOrderStock(
+          orderId,
+          OrderStatus.PENDING_PAYMENT,
+          StockReservationStatus.ACTIVE,
+          2,
+        );
+      } finally {
+        await db.query(
+          'ALTER TABLE orders DROP CONSTRAINT ck_expiry_test_order',
+        );
+      }
+      expect(await worker.processBatch()).toBe(1);
+      await expectOrderStock(
+        orderId,
+        OrderStatus.EXPIRED,
+        StockReservationStatus.RELEASED,
+        0,
+      );
+    }, 15000);
   });
 
   it('rate-limits callbacks from the same peer despite different forwarded IP headers', async () => {

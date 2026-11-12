@@ -113,6 +113,11 @@ export class PaymentsService {
           'Cancelled orders cannot accept payment events',
         );
       }
+      if (order.status === OrderStatus.EXPIRED) {
+        throw new ConflictException(
+          'Expired orders cannot accept payment events',
+        );
+      }
       const payment = await payments.findOneByOrFail({ id: session.id });
       if (
         amountMinor !== order.totalMinor ||

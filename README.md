@@ -23,6 +23,9 @@ THREAD is a single-brand fashion e-commerce backend for CSC4161. The NestJS appl
 | `SWAGGER_ENABLED` | Set to `false` to disable Swagger UI and OpenAPI JSON. Defaults to `true` |
 | `PAYMENT_PROVIDER` | Defaults to `DISABLED`. Set explicitly to `MOCK` to enable mock payment sessions and callbacks |
 | `MOCK_PAYMENT_SIGNING_SECRET` | Required in `MOCK` mode. Generate a separate random secret using the same command as for `JWT_SECRET` |
+| `ORDER_EXPIRY_ENABLED` | Defaults to `true` outside tests and `false` with `NODE_ENV=test`. Set `false` to pause automatic expiry |
+| `ORDER_EXPIRY_POLL_INTERVAL_MS` | Time between polling ticks in milliseconds. Defaults to `60000` and accepts `1000`–`3600000` |
+| `ORDER_EXPIRY_BATCH_SIZE` | Maximum candidate orders per poll. Defaults to `25` and accepts `1`–`100` |
 
 With the default port, `GET http://localhost:3000/api/v1/health` returns HTTP 200 with `data.status` set to `"ok"`. This checks HTTP liveness. Startup requires a working PostgreSQL connection. Open Swagger UI at `http://localhost:3000/api/docs`, or fetch the OpenAPI document from `/api/docs-json`.
 
@@ -151,7 +154,15 @@ An eligible order reuses its open session. A failed attempt is terminal and the 
 
 The webhook expects uncompressed JSON and a 64-character hexadecimal HMAC-SHA256 digest in `X-Mock-Payment-Signature`. Each event has a provider-generated UUID v4 `eventId`. Reuse the same ID and fields when retrying delivery. An already accepted ID returns 200 with `data.duplicate` set to `true`. Reusing an ID with different fields returns 409. Rejected events and rolled-back transactions leave the ID available for retry. The app limits callbacks to 60 requests per connected IP per minute per process. A reverse proxy can share that budget across its clients.
 
-Payment and cancellation lock the order before checking eligibility or changing its state. Future expiry processing can reuse `OrdersService.lockForUpdate` and `InventoryService.releaseForOrder` with the same transaction manager. Fulfillment should also lock the order before changing its reservations.
+## Automatic order expiry
+
+The worker runs on application startup and at each configured polling tick. It skips ticks while a batch is running and finishes the current batch at shutdown. PostgreSQL holds the outstanding work, so a new process can pick up overdue orders after a restart.
+
+The first active reservation deadline closes the payment window for the whole order. Each poll finds a bounded page of `PENDING_PAYMENT` orders with at least one `ACTIVE` reservation due according to PostgreSQL. A cursor advances past failed candidates and wraps so later orders get a turn and failures can be retried. The cursor only controls scan order.
+
+The worker locks each candidate through `OrdersService.lockForUpdate` in its own transaction, then rechecks status and deadline. This makes candidates safe to select without locks and prevents duplicate release across instances. The worker calls `InventoryService.releaseForOrder` to release all active reservations, preserves `onHand`, and transitions the order to `EXPIRED` in the same transaction. Lock waits time out after five seconds per lock. Failures roll back and can be retried by a later poll.
+
+A paid or cancelled order keeps its committed status when the worker reaches it. Successful payment already requires the PostgreSQL clock to be before the deadline, even between polls. After expiry commits, new payment sessions, new signed payment events, and customer cancellation return 409. Payment history remains available, and previously accepted events still deduplicate. Future fulfillment should take the order lock before changing reservations.
 
 ## Verification
 
