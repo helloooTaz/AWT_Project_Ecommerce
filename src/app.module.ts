@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { validateEnvironment, type Environment } from './config/env.validation';
 import { databaseOptions } from './database/database.options';
 import { HealthController } from './health.controller';
+import { InventoryService } from './modules/inventory/inventory.service';
 
 @Module({
   imports: [
@@ -15,5 +16,6 @@ import { HealthController } from './health.controller';
     }),
   ],
   controllers: [HealthController],
+  providers: [InventoryService],
 })
 export class AppModule {}
