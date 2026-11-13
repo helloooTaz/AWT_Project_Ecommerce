@@ -176,6 +176,35 @@ An eligible order reuses its open session. A failed attempt is terminal and the 
 
 The webhook expects uncompressed JSON and a 64-character hexadecimal HMAC-SHA256 digest in `X-Mock-Payment-Signature`. Each event has a provider-generated UUID v4 `eventId`. Reuse the same ID and fields when retrying delivery. An already accepted ID returns 200 with `data.duplicate` set to `true`. Reusing an ID with different fields returns 409. Rejected events and rolled-back transactions leave the ID available for retry. The app limits callbacks to 60 requests per connected IP per minute per process. A reverse proxy can share that budget across its clients.
 
+## Order confirmation email
+
+Set `MAIL_ENABLED=true` in your local `.env` and provide `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM` (a sender email address). Startup
+validates those settings when enabled. Mail defaults to disabled, and automated
+tests use a fake transport. SMTP uses implicit TLS on port 465 and requires
+STARTTLS on other ports.
+
+1. Open a Mailtrap Email Sandbox and copy its SMTP settings into `.env`.
+   The sandbox host is `sandbox.smtp.mailtrap.io`, typically on port `2525`.
+   Use a demo sender address such as `orders@example.com`.
+2. Enable mock payments as described above, start the app, and sign in as a
+   demo customer. Check out, open a payment session, and send a signed `PAID`
+   callback using the PowerShell example above.
+3. Confirm the webhook returned HTTP 200 and the order is `CONFIRMED`. In the
+   Mailtrap inbox, inspect the HTML and plain-text versions for the order
+   reference, purchased items, quantities, and BDT total. Run the signing
+   example again with the same session and amount to send a new event ID.
+   The inbox should still show one confirmation for the order. To test an
+   exact replay, resend the original signed JSON bytes and signature.
+
+SMTP is attempted only after the newly confirmed payment and order commit.
+The webhook waits for that attempt and returns the existing acknowledgement
+even if delivery fails. Failures log a warning with the order ID. This is
+best-effort delivery with no durable retry. A process exit after commit or an
+SMTP failure can leave an order confirmed without an email, and callback
+replays do not retry delivery. A durable outbox would require persisted jobs,
+a retry worker, and a delivery deduplication strategy.
+
 ## Automatic order expiry
 
 The worker runs on application startup and at each configured polling tick. It skips ticks while a batch is running and finishes the current batch at shutdown. PostgreSQL holds the outstanding work, so a new process can pick up overdue orders after a restart.

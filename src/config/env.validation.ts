@@ -10,6 +10,12 @@ export interface Environment {
   ORDER_EXPIRY_ENABLED: boolean;
   ORDER_EXPIRY_POLL_INTERVAL_MS: number;
   ORDER_EXPIRY_BATCH_SIZE: number;
+  MAIL_ENABLED: boolean;
+  SMTP_HOST?: string;
+  SMTP_PORT?: number;
+  SMTP_USER?: string;
+  SMTP_PASSWORD?: string;
+  MAIL_FROM?: string;
 }
 
 const databaseUrlSchema = Joi.string()
@@ -38,6 +44,30 @@ const schema = Joi.object<Environment>({
     .max(3_600_000)
     .default(60_000),
   ORDER_EXPIRY_BATCH_SIZE: Joi.number().integer().min(1).max(100).default(25),
+  MAIL_ENABLED: Joi.boolean().default(false),
+  SMTP_HOST: Joi.when('MAIL_ENABLED', {
+    is: true,
+    then: Joi.string().trim().hostname().required(),
+  }),
+  SMTP_PORT: Joi.when('MAIL_ENABLED', {
+    is: true,
+    then: Joi.number().integer().min(1).max(65535).required(),
+  }),
+  SMTP_USER: Joi.when('MAIL_ENABLED', {
+    is: true,
+    then: Joi.string().trim().required(),
+  }),
+  SMTP_PASSWORD: Joi.when('MAIL_ENABLED', {
+    is: true,
+    then: Joi.string().pattern(/\S/).required(),
+  }),
+  MAIL_FROM: Joi.when('MAIL_ENABLED', {
+    is: true,
+    then: Joi.string()
+      .trim()
+      .email({ tlds: { allow: false } })
+      .required(),
+  }),
 });
 
 export function validateDatabaseUrl(value: unknown): string {

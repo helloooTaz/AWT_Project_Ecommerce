@@ -24,6 +24,7 @@ import {
   StockReservationStatus,
 } from '../../src/modules/inventory/entities/stock-reservation.entity';
 import { InventoryService } from '../../src/modules/inventory/inventory.service';
+import { MAIL_TRANSPORT } from '../../src/modules/mail/smtp.transport';
 import { OrderItem } from '../../src/modules/orders/entities/order-item.entity';
 import {
   Order,
@@ -63,6 +64,10 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
   let addressId: string;
   const userIds: string[] = [];
   const eventIds: string[] = [];
+  const sendMail = jest.fn<
+    Promise<void>,
+    [import('nodemailer').SendMailOptions]
+  >();
 
   function api() {
     return request(app.getHttpServer());
@@ -233,7 +238,10 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
     const { AppModule } = await import('../../src/app.module');
     const module = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(MAIL_TRANSPORT)
+      .useValue({ sendMail })
+      .compile();
     app = module.createNestApplication<INestApplication<Server>>({
       rawBody: true,
     });
@@ -285,6 +293,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
 
   afterEach(async () => {
     jest.restoreAllMocks();
+    sendMail.mockReset();
     if (!db?.isInitialized || !owner || !variantId) {
       return;
     }
@@ -392,6 +401,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
     await send(compact, 'not-a-digest').expect(401);
     await send(compact, '0'.repeat(64)).expect(401);
     await send(formatted, sign(compact)).expect(401);
+    expect(sendMail).not.toHaveBeenCalled();
     await expectState(
       orderId,
       OrderStatus.PENDING_PAYMENT,
@@ -512,6 +522,108 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       .expect(({ body }) => {
         expect(body).toHaveProperty('data.duplicate', false);
       });
+    expect(sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends one confirmation from stored snapshots after the payment and event have committed', async () => {
+    const { orderId } = await checkout();
+    const payment = await openPayment(orderId);
+    const payload = event(payment);
+    const anotherId = event(payment);
+    const product = await db
+      .getRepository(Product)
+      .findOneByOrFail({ id: productId });
+    const variant = await db
+      .getRepository(ProductVariant)
+      .findOneByOrFail({ id: variantId });
+    const customer = await db
+      .getRepository(User)
+      .findOneByOrFail({ id: owner.id });
+    await db
+      .getRepository(Product)
+      .update(productId, { name: 'Renamed Shirt' });
+    await db.getRepository(ProductVariant).update(variantId, {
+      color: 'Red',
+      priceMinor: 1,
+    });
+
+    let stateAtSend:
+      | { order: OrderStatus; payment: PaymentStatus; committedEvent: boolean }
+      | undefined;
+    sendMail.mockImplementationOnce(async () => {
+      const [order, storedPayment, committedEvent] = await Promise.all([
+        db.getRepository(Order).findOneByOrFail({ id: orderId }),
+        db
+          .getRepository(Payment)
+          .findOneByOrFail({ providerRef: payment.providerRef }),
+        db
+          .getRepository(MockPaymentEvent)
+          .existsBy({ eventId: payload.eventId }),
+      ]);
+      stateAtSend = {
+        order: order.status,
+        payment: storedPayment.status,
+        committedEvent,
+      };
+    });
+    try {
+      await callback(payload).expect(200);
+      await callback(payload).expect(200);
+      await callback(anotherId).expect(200);
+      expect(stateAtSend).toEqual({
+        order: OrderStatus.CONFIRMED,
+        payment: PaymentStatus.PAID,
+        committedEvent: true,
+      });
+      expect(sendMail).toHaveBeenCalledTimes(1);
+      const [message] = sendMail.mock.calls[0];
+      expect(message.to).toEqual({ address: customer.email, name: '' });
+      for (const body of [message.text, message.html]) {
+        expect(body).toContain(customer.fullName);
+        expect(body).toContain(orderId);
+        expect(body).toContain('2 × Test Shirt (M, Blue)');
+        expect(body).toContain('BDT 2,500.00');
+        expect(body).not.toContain('Renamed Shirt');
+        expect(body).not.toContain(payment.providerRef);
+        expect(body).not.toContain('House 12');
+      }
+    } finally {
+      await db.getRepository(Product).update(productId, { name: product.name });
+      await db.getRepository(ProductVariant).update(variantId, {
+        color: variant.color,
+        priceMinor: variant.priceMinor,
+      });
+    }
+  });
+
+  it('keeps the payment, order and event committed when SMTP fails', async () => {
+    const { orderId } = await checkout();
+    const payment = await openPayment(orderId);
+    const payload = event(payment);
+    const warning = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => {});
+    sendMail.mockRejectedValueOnce(
+      new Error('raw SMTP error with credentials'),
+    );
+
+    const response = await callback(payload).expect(200);
+    expect(response.body).toHaveProperty('data', { duplicate: false });
+    expect(warning).toHaveBeenCalledWith(
+      `Order confirmation email failed for order ${orderId}`,
+    );
+    expect(warning.mock.calls.flat()).not.toContain(
+      'raw SMTP error with credentials',
+    );
+    await expectState(
+      orderId,
+      OrderStatus.CONFIRMED,
+      payment.providerRef,
+      PaymentStatus.PAID,
+    );
+    const replay = await callback(payload).expect(200);
+    expect(replay.body).toHaveProperty('data', { duplicate: true });
+    expect(sendMail).toHaveBeenCalledTimes(1);
   });
 
   it('commits only one terminal outcome when success and failure race', async () => {
@@ -523,6 +635,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       Promise.all([callback(success), callback(failure)]),
     );
     expect([paid.status, failed.status].sort()).toEqual([200, 409]);
+    expect(sendMail).toHaveBeenCalledTimes(paid.status === 200 ? 1 : 0);
     const accepted = paid.status === 200 ? success : failure;
     const orderStatus =
       paid.status === 200 ? OrderStatus.CONFIRMED : OrderStatus.PENDING_PAYMENT;
@@ -551,6 +664,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       .getRepository(StockReservation)
       .findOneByOrFail({ variantId });
     await callback(event(first, PaymentStatus.FAILED)).expect(200);
+    expect(sendMail).not.toHaveBeenCalled();
     await expectState(
       orderId,
       OrderStatus.PENDING_PAYMENT,
@@ -563,7 +677,9 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
     const retry = await openPayment(orderId);
     expect(retry.providerRef).not.toBe(first.providerRef);
     await callback(event(first)).expect(409);
+    expect(sendMail).not.toHaveBeenCalled();
     await callback(event(retry)).expect(200);
+    expect(sendMail).toHaveBeenCalledTimes(1);
     await expectState(
       orderId,
       OrderStatus.CONFIRMED,
@@ -622,6 +738,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       });
     await callback(payload).expect(500);
     expect(sawTransactionalWrites).toBe(true);
+    expect(sendMail).not.toHaveBeenCalled();
     await expectState(
       orderId,
       OrderStatus.PENDING_PAYMENT,
@@ -634,6 +751,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
         .existsBy({ eventId: payload.eventId }),
     ).toBe(false);
     await callback(payload).expect(200);
+    expect(sendMail).toHaveBeenCalledTimes(1);
     await expectState(
       orderId,
       OrderStatus.CONFIRMED,
@@ -857,6 +975,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       const failure = event(payment, PaymentStatus.FAILED);
       await callback(success).expect(409);
       await callback(failure).expect(409);
+      expect(sendMail).not.toHaveBeenCalled();
       await expectState(
         orderId,
         OrderStatus.CANCELLED,
@@ -1034,6 +1153,7 @@ describeWithPostgres('Payments and cancellation with PostgreSQL', () => {
       await callback(failure).expect(409);
       const replay = await callback(acceptedFailure).expect(200);
       expect(replay.body).toHaveProperty('data.duplicate', true);
+      expect(sendMail).not.toHaveBeenCalled();
       await expectState(
         orderId,
         OrderStatus.EXPIRED,

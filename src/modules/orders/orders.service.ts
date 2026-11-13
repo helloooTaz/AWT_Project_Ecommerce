@@ -75,6 +75,27 @@ export class OrdersService {
     return order ? orderSummary(order) : null;
   }
 
+  async findConfirmationDetails(id: string) {
+    const [order] = await this.orders.find({
+      where: { id },
+      select: {
+        id: true,
+        totalMinor: true,
+        user: { id: true, email: true, fullName: true },
+        items: {
+          id: true,
+          nameSnapshot: true,
+          sizeSnapshot: true,
+          colorSnapshot: true,
+          quantity: true,
+        },
+      },
+      relations: { user: true, items: true },
+      order: { items: { createdAt: 'ASC', id: 'ASC' } },
+    });
+    return order;
+  }
+
   async findItemsForReservation(
     manager: EntityManager,
     orderItemIds: string[],

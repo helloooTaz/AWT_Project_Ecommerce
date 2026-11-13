@@ -110,4 +110,37 @@ describe('environment configuration', () => {
       'Invalid environment configuration: ORDER_EXPIRY_POLL_INTERVAL_MS, ORDER_EXPIRY_BATCH_SIZE',
     );
   });
+
+  it('defaults to disabled and ignores incomplete SMTP settings when disabled', () => {
+    expect(
+      validateEnvironment({ DATABASE_URL, JWT_SECRET, SMTP_PORT: '' }),
+    ).toMatchObject({ MAIL_ENABLED: false });
+  });
+
+  it('validates all SMTP settings when mail is enabled', () => {
+    const config = { DATABASE_URL, JWT_SECRET, MAIL_ENABLED: 'true' };
+    expect(() => validateEnvironment(config)).toThrow(
+      'Invalid environment configuration: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, MAIL_FROM',
+    );
+    const smtp = {
+      SMTP_HOST: 'smtp.example.com',
+      SMTP_PORT: '2525',
+      SMTP_USER: 'sandbox-user',
+      SMTP_PASSWORD: 'sandbox-password',
+      MAIL_FROM: 'orders@example.com',
+    };
+    expect(validateEnvironment({ ...config, ...smtp })).toMatchObject({
+      ...smtp,
+      MAIL_ENABLED: true,
+      SMTP_PORT: 2525,
+    });
+    expect(() =>
+      validateEnvironment({
+        ...config,
+        ...smtp,
+        SMTP_PORT: '70000',
+        MAIL_FROM: 'invalid',
+      }),
+    ).toThrow('Invalid environment configuration: SMTP_PORT, MAIL_FROM');
+  });
 });

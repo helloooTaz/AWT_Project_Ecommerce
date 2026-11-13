@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { MailModule } from '../mail/mail.module';
 import { OrdersModule } from '../orders/orders.module';
 import { MockPaymentEvent } from './entities/mock-payment-event.entity';
 import { Payment } from './entities/payment.entity';
@@ -12,6 +13,7 @@ import { PaymentsService } from './payments.service';
   imports: [
     TypeOrmModule.forFeature([Payment, MockPaymentEvent]),
     AuthModule,
+    MailModule,
     OrdersModule,
   ],
   controllers: [PaymentsController],
