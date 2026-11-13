@@ -6,6 +6,7 @@ import {
   Post,
   Res,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -21,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { successResponse } from '../../common/dto/success-response';
+import { ResponseTimingInterceptor } from '../../common/interceptors/response-timing.interceptor';
 import { RequestValidationException } from '../../common/pipes/request-validation.pipe';
 import type { AuthenticatedUser } from '../auth/authenticated-user';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -54,6 +56,7 @@ export class CheckoutController {
   constructor(private readonly checkoutService: CheckoutService) {}
 
   @Post()
+  @UseInterceptors(ResponseTimingInterceptor)
   @ApiHeader({
     name: 'Idempotency-Key',
     required: true,

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { STATUS_CODES } from 'node:http';
 import {
   Catch,
@@ -9,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { QueryFailedError } from 'typeorm';
+import { getRequestId } from '../middleware/request-context';
 import { RequestValidationException } from '../pipes/request-validation.pipe';
 
 function getStatus(exception: unknown): number {
@@ -77,7 +77,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
           : (HttpStatus[status] ?? 'HTTP_ERROR'),
         details: validation?.details ?? [],
       },
-      meta: { requestId: randomUUID() },
+      meta: { requestId: getRequestId() },
     });
   }
 }

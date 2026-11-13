@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RequestLoggingMiddleware } from './common/middleware/request-logging.middleware';
 import { validateEnvironment, type Environment } from './config/env.validation';
 import { databaseOptions } from './database/database.options';
 import { HealthController } from './health.controller';
@@ -31,5 +32,6 @@ import { SizeRecommendationModule } from './modules/size-recommendations/size-re
     SizeRecommendationModule,
   ],
   controllers: [HealthController],
+  providers: [RequestLoggingMiddleware],
 })
 export class AppModule {}

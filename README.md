@@ -215,6 +215,23 @@ The worker locks each candidate through `OrdersService.lockForUpdate` in its own
 
 A paid or cancelled order keeps its committed status when the worker reaches it. Successful payment already requires the PostgreSQL clock to be before the deadline, even between polls. After expiry commits, new payment sessions, new signed payment events, and customer cancellation return 409. Payment history remains available, and previously accepted events still deduplicate. Future fulfillment should take the order lock before changing reservations.
 
+## Request correlation and checkout timing
+
+Every HTTP response includes a server-generated `X-Request-ID`. For JSON API
+envelopes, the same value appears in `meta.requestId`. The request log records
+the method, path without the query string, request ID, final status, and
+duration through response finish.
+
+Checkout also includes `X-Response-Time`, such as `12.34ms`. This covers the
+checkout pipeline after guards, including validation and asynchronous
+checkout work. Guard rejections still carry the request ID. The interceptor
+runs only on checkout.
+
+For a demo, send `GET /api/v1/health` and a malformed JSON request. Match each
+response's header and envelope ID to its log line. Then check out in Swagger
+or Postman and compare the timing header with the end-to-end duration in the
+log. Reuse the checkout idempotency key to see timing on the replay response.
+
 ## Verification
 
 ```sh

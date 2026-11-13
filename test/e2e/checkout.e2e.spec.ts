@@ -39,6 +39,7 @@ const describeWithPostgres = testDatabaseUrl ? describe : describe.skip;
 const checkoutPath = '/api/v1/checkout';
 const ordersPath = '/api/v1/me/orders';
 const cartPath = '/api/v1/me/cart';
+const responseTime = /^\d+\.\d{2}ms$/;
 const deliveryAddress = {
   recipient: 'Samira Rahman',
   phone: '+8801712345678',
@@ -309,10 +310,16 @@ describeWithPostgres('Atomic checkout with PostgreSQL and bearer JWT', () => {
   });
 
   it('requires a valid customer JWT and a valid key and body', async () => {
-    await api()
+    const unauthorized = await api()
       .post(checkoutPath)
       .send({ addressId: customer.addressId })
       .expect(401);
+    expect(unauthorized.headers['x-response-time']).toBeUndefined();
+    expect(unauthorized.headers['x-request-id']).toEqual(expect.any(String));
+    expect(unauthorized.body).toHaveProperty(
+      'meta.requestId',
+      unauthorized.headers['x-request-id'],
+    );
     await checkout(staff, 'checkout-key').expect(403);
     await checkout(customer, 'checkout-key', 'invalid-uuid').expect(400);
     for (const key of ['', 'invalid key', 'a'.repeat(129)]) {
@@ -342,8 +349,14 @@ describeWithPostgres('Atomic checkout with PostgreSQL and bearer JWT', () => {
   });
 
   it('rejects empty carts and hides addresses belonging to other customers', async () => {
-    const empty = await checkout(customer, 'empty').expect(400);
+    const empty = await checkout(customer, 'empty')
+      .expect('X-Response-Time', responseTime)
+      .expect(400);
     expect(empty.body).toHaveProperty('message', 'Cart is empty');
+    expect(empty.body).toHaveProperty(
+      'meta.requestId',
+      empty.headers['x-request-id'],
+    );
     await add(customer, await createVariant());
     await checkout(customer, 'foreign-address', other.addressId).expect(404);
     await checkout(customer, 'missing-address', randomUUID()).expect(404);
@@ -359,9 +372,11 @@ describeWithPostgres('Atomic checkout with PostgreSQL and bearer JWT', () => {
       .getRepository(ProductVariant)
       .update(first.id, { priceMinor: 185000 });
     const start = Date.now();
-    const result = await checkout(customer, 'snapshot').expect(201);
+    const result = await checkout(customer, 'snapshot')
+      .expect('X-Response-Time', responseTime)
+      .expect(201);
     const { orderId } = checkoutData(result.body);
-    expect(result.body).toMatchObject({
+    expect(result.body).toEqual({
       success: true,
       message: 'Order created',
       data: {
@@ -370,6 +385,7 @@ describeWithPostgres('Atomic checkout with PostgreSQL and bearer JWT', () => {
         currency: 'BDT',
         totalMinor: '520000',
       },
+      meta: { requestId: result.headers['x-request-id'] },
     });
     const detail = await api()
       .get(`${ordersPath}/${orderId}`)
@@ -542,7 +558,9 @@ describeWithPostgres('Atomic checkout with PostgreSQL and bearer JWT', () => {
       customer,
       'replay',
       customer.addressId.toUpperCase(),
-    ).expect(200);
+    )
+      .expect('X-Response-Time', responseTime)
+      .expect(200);
     expect(afterClear.body).toHaveProperty('data', first);
     await add(customer, variant, 2);
     const later = await checkout(customer, 'replay').expect(200);

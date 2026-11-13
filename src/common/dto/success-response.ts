@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { getRequestId } from '../middleware/request-context';
 
 interface Pagination {
   page: number;
@@ -16,6 +16,6 @@ export function successResponse<T>(
     success: true as const,
     message,
     data,
-    meta: { requestId: randomUUID(), ...(pagination && { pagination }) },
+    meta: { requestId: getRequestId(), ...(pagination && { pagination }) },
   };
 }
