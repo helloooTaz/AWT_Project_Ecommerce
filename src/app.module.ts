@@ -11,6 +11,7 @@ import { CartModule } from './modules/cart/cart.module';
 import { CheckoutModule } from './modules/checkout/checkout.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { SizeRecommendationModule } from './modules/size-recommendations/size-recommendation.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     OrdersModule,
     CheckoutModule,
     PaymentsModule,
+    SizeRecommendationModule,
   ],
   controllers: [HealthController],
 })

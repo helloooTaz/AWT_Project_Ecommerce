@@ -92,6 +92,28 @@ Each line shows `availableQuantity` and `canPurchase`. A line stays visible when
 - `InventoryService.reserveForOrder(manager, items, reservationExpiresAt)` expects an active transaction and item records with `orderItemId`, `variantId`, and `quantity` matching the order items in that transaction. It locks balance rows by ascending variant ID, checks the combined requested quantity per variant, inserts an `ACTIVE` reservation per item, and increments `reserved`. Insufficient stock or a duplicate reservation returns 409. The caller owns commit and rollback.
 - `CreateStockReservations1794470400006` adds `stock_reservations` after the Orders migration. Its unique order-item foreign key allows one reservation per line, and the status/expiry index supports future expiry processing. Reservations change the reserved quantity. Stock-movement events apply to stock receipt and adjustment.
 
+## Product size recommendations
+
+Send `POST /api/v1/products/{productId}/size-recommendation` from Swagger or any HTTP client. The route is public and the product must be published. A request can use `{"heightCm":175,"weightKg":70,"chestCm":98}`. Height and weight are required. Chest, waist, and hip are optional. Use JSON numbers with height 50–260 cm, weight 10–500 kg, and circumferences 30–300 cm. Invalid input returns 400, and a missing, draft, or archived product returns 404.
+
+The service compares each supplied measurement against the guide bounds for that size. Bounds are inclusive and may be one-sided. A size needs at least one comparable measurement, and every comparable measurement must fit. For overlapping sizes, the lowest mean midpoint distance wins. Each distance is divided by its range width, and an exact-width range scores zero for an exact match. A match with only one-sided comparisons ranks after matches with a midpoint. Equal scores prefer more matched measurements and then size label order. `confidence` is `LOW` for one compared measurement or height and weight alone, and `MODERATE` when multiple comparisons include a circumference.
+
+HTTP 200 uses the standard success envelope. `data.status` describes the outcome.
+
+| Status | Meaning |
+| --- | --- |
+| `RECOMMENDED` | The closest matching size has an active variant. `stockAvailable` indicates whether any active color of that size has unreserved stock. |
+| `NO_GUIDE` | The product has no guide with ranges. |
+| `INSUFFICIENT_MEASUREMENTS` | The guide has no bounds for the supplied measurements. |
+| `NO_MATCH` | The supplied measurements fall outside every comparable range. |
+| `NO_ACTIVE_VARIANT` | `bestFitSize` shows the closest match, and `recommendedSize` is null. Other fitting sizes with active variants may appear in `alternatives`. |
+
+`availableSizes` lists distinct active variant labels, regardless of stock. `alternatives` lists other matching active sizes in fit order. This estimate leaves measurements, carts, customer profiles, and stock reservations untouched.
+
+### Size-guide data handoff
+
+`CreateSizeGuides1794470400009` creates one guide per product and multiple ranges per guide. Bounds use PostgreSQL `numeric(6,2)` with centimeter lengths and kilogram weights. PostgreSQL enforces at least one positive finite bound per range and validates the order of each min/max pair. Set each unique guide size label to the exact `ProductVariant.size` value used by that product. Staff owns guide records and can reuse the canonical entities for guide management. For a local demo, apply migrations and run `npm test -- --runInBand size-recommendations.e2e` with `TEST_DATABASE_URL` set. The suite creates a published shirt with size and color fixtures and exercises the Swagger-documented route.
+
 ## Customer order history
 
 Use a `CUSTOMER` bearer token in Swagger or the `Authorization` header. Both routes return the standard success envelope.
@@ -172,4 +194,4 @@ npm run lint
 npm test
 ```
 
-The foundation tests run without PostgreSQL. For the profile, address, cart, order-history, checkout dependency, checkout, and payment suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. The payment suite generates its own mock signing secret. Jest skips these suites when `TEST_DATABASE_URL` is unset.
+The foundation tests run without PostgreSQL. For the profile, address, cart, size recommendation, order-history, checkout dependency, checkout, and payment suites, use a dedicated local test database, apply migrations with `DATABASE_URL` pointing to it, then set `TEST_DATABASE_URL` to the same URL and run `npm test`. Each suite uses a generated JWT secret, creates its own fixtures, and cleans them up. The payment suite generates its own mock signing secret. Jest skips these suites when `TEST_DATABASE_URL` is unset.

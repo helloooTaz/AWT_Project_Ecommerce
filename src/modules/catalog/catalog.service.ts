@@ -6,7 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, type EntityManager } from 'typeorm';
 import { ProductVariant } from './entities/product-variant.entity';
-import { ProductStatus } from './entities/product.entity';
+import { Product, ProductStatus } from './entities/product.entity';
 
 @Injectable()
 export class CatalogService {
@@ -28,6 +28,23 @@ export class CatalogService {
   isPurchasable(variant: ProductVariant): boolean {
     return (
       variant.isActive && variant.product.status === ProductStatus.PUBLISHED
+    );
+  }
+
+  async findPublishedProductWithActiveVariants(productId: string) {
+    const product = await this.variants.manager
+      .getRepository(Product)
+      .createQueryBuilder('product')
+      .leftJoin('product.variants', 'variant', 'variant.isActive = true')
+      .select(['product.id', 'variant.id', 'variant.size'])
+      .where({ id: productId, status: ProductStatus.PUBLISHED })
+      .getOne();
+
+    return (
+      product && {
+        id: product.id,
+        variants: product.variants.map(({ id, size }) => ({ id, size })),
+      }
     );
   }
 
