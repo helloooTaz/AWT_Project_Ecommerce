@@ -7,12 +7,15 @@ import { databaseOptions } from './database/database.options';
 import { HealthController } from './health.controller';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CartModule } from './modules/cart/cart.module';
 import { CheckoutModule } from './modules/checkout/checkout.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { SizeRecommendationModule } from './modules/size-recommendations/size-recommendation.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -23,6 +26,9 @@ import { SizeRecommendationModule } from './modules/size-recommendations/size-re
         databaseOptions(config.get('DATABASE_URL', { infer: true })),
     }),
     AuthModule,
+    UsersModule,
+    AuditModule,
+    AnalyticsModule,
     AccountsModule,
     AddressesModule,
     CartModule,

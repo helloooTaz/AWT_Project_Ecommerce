@@ -232,6 +232,27 @@ response's header and envelope ID to its log line. Then check out in Swagger
 or Postman and compare the timing header with the end-to-end duration in the
 log. Reuse the checkout idempotency key to see timing on the replay response.
 
+## Admin and staff administration demo
+
+1. Seed the initial administrator account:
+   ```sh
+   npm run seed:admin
+   ```
+   This creates or activates `admin@thread.local` with password `AdminPass123!` (or the values from `ADMIN_EMAIL` and `ADMIN_PASSWORD`).
+2. Log in at `POST /api/v1/auth/login` using the administrator credentials. Copy `data.accessToken` and use it as the Bearer token in Swagger or Postman.
+3. Access Admin management endpoints:
+
+| Method and path | Access | Result |
+| --- | --- | --- |
+| `POST /api/v1/admin/staff` | ADMIN | Create a new `STAFF` or `INVENTORY_MANAGER` account with audited record, 201 |
+| `GET /api/v1/admin/staff` | ADMIN | List staff members with pagination (`page`, `limit`, `role`, `status`), 200 |
+| `GET /api/v1/admin/staff/:id` | ADMIN | Read specific staff member detail, 200 |
+| `PATCH /api/v1/admin/staff/:id` | ADMIN | Update staff name, role, or status with before/after audit log, 200 |
+| `DELETE /api/v1/admin/staff/:id` | ADMIN | Deactivate (soft-delete) staff member with audit log, 200 |
+| `GET /api/v1/admin/audit-logs` | ADMIN | Paginated system audit log history with filter options, 200 |
+| `GET /api/v1/admin/analytics/summary` | ADMIN | System-wide operational and user metrics summary, 200 |
+| `GET /api/v1/users/me` | Any Authenticated | Retrieve current user profile safely, 200 |
+
 ## Verification
 
 ```sh
