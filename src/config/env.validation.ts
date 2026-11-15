@@ -4,6 +4,7 @@ export interface Environment {
   DATABASE_URL: string;
   PORT: number;
   SWAGGER_ENABLED: boolean;
+  JWT_SECRET: string;
 }
 
 const schema = Joi.object<Environment>({
@@ -12,6 +13,7 @@ const schema = Joi.object<Environment>({
     .required(),
   PORT: Joi.number().integer().min(1).max(65535).default(3000),
   SWAGGER_ENABLED: Joi.boolean().default(true),
+  JWT_SECRET: Joi.string().min(32).required(),
 });
 
 export function validateEnvironment(
