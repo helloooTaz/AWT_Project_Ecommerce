@@ -10,7 +10,7 @@ async function seedAdmin() {
   const email = (process.env.ADMIN_EMAIL || 'admin@thread.local')
     .toLowerCase()
     .trim();
-  const password = process.env.ADMIN_PASSWORD || 'AdminPass123!';
+  const password = process.env.ADMIN_PASSWORD || 'Password123!';
   const fullName = process.env.ADMIN_FULL_NAME || 'System Administrator';
 
   console.log(`[SeedAdmin] Connecting to database...`);

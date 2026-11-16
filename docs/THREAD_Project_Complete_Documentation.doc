@@ -1,0 +1,455 @@
+<html xmlns:o='urn:schemas-microsoft-com:office:office'
+      xmlns:w='urn:schemas-microsoft-com:office:word'
+      xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+  <meta charset="utf-8">
+  <title>THREAD Commerce API - Complete Project Documentation</title>
+  <style>
+    body {
+      font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.5;
+      color: #1a1a1a;
+      margin: 36pt 48pt 36pt 48pt;
+    }
+    h1 {
+      font-size: 24pt;
+      color: #0b3d91;
+      border-bottom: 2pt solid #0b3d91;
+      padding-bottom: 6pt;
+      margin-top: 18pt;
+      margin-bottom: 12pt;
+    }
+    h2 {
+      font-size: 16pt;
+      color: #1b4965;
+      border-bottom: 1pt solid #cbd5e1;
+      padding-bottom: 4pt;
+      margin-top: 16pt;
+      margin-bottom: 8pt;
+    }
+    h3 {
+      font-size: 13pt;
+      color: #2b2d42;
+      margin-top: 12pt;
+      margin-bottom: 6pt;
+    }
+    p, li {
+      margin-top: 0;
+      margin-bottom: 6pt;
+      text-align: justify;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 8pt;
+      margin-bottom: 14pt;
+      font-size: 10pt;
+    }
+    th {
+      background-color: #0b3d91;
+      color: #ffffff;
+      font-weight: bold;
+      text-align: left;
+      padding: 6pt 8pt;
+      border: 1pt solid #0b3d91;
+    }
+    td {
+      padding: 5pt 8pt;
+      border: 1pt solid #cbd5e1;
+      vertical-align: top;
+    }
+    tr:nth-child(even) {
+      background-color: #f8fafc;
+    }
+    .callout {
+      background-color: #f1f5f9;
+      border-left: 4pt solid #0b3d91;
+      padding: 8pt 12pt;
+      margin: 10pt 0;
+    }
+    .badge {
+      background-color: #e2e8f0;
+      color: #334155;
+      padding: 2pt 6pt;
+      border-radius: 4pt;
+      font-size: 9pt;
+      font-weight: bold;
+    }
+    code {
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 9.5pt;
+      background-color: #f1f5f9;
+      padding: 1pt 3pt;
+      border-radius: 2pt;
+    }
+    pre {
+      background-color: #f8fafc;
+      border: 1pt solid #e2e8f0;
+      padding: 8pt;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 9.5pt;
+      overflow-x: auto;
+      margin: 8pt 0;
+    }
+    .header-box {
+      text-align: center;
+      margin-bottom: 24pt;
+      border-bottom: 2pt double #0b3d91;
+      padding-bottom: 12pt;
+    }
+    .header-box h1 {
+      border-bottom: none;
+      margin-bottom: 4pt;
+    }
+    .meta-text {
+      color: #64748b;
+      font-size: 10pt;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header-box">
+  <h1>THREAD Commerce & Operations REST API</h1>
+  <p style="font-size: 14pt; color: #475569; margin: 0;">Comprehensive Architectural Specification & System Documentation</p>
+  <p class="meta-text">Course: CSC 4161 / CSC 4182 (Advanced Programming in Web Technologies) | AIUB | Semester: Fall 2026-2027</p>
+  <p class="meta-text">Target Role Focus: <b>Administrator (Role D)</b> & System Integration</p>
+</div>
+
+<h2>1. Executive Summary & Problem Statement</h2>
+<p>
+Modern fashion and apparel retailers operate in high-velocity direct-to-consumer (DTC) environments with complex product matrices (e.g., styles, sizes, colors, and stock-keeping units / SKUs). When catalog updates, inventory reservations, customer carts, and checkout pipelines operate in disconnected silos, race conditions cause severe business failures: product overselling, stale pricing, phantom reservations, and inconsistent order ledgers.
+</p>
+<p>
+<b>THREAD</b> is an enterprise-grade single-brand fashion e-commerce REST API built with NestJS, TypeScript, PostgreSQL, and TypeORM. It models end-to-end retail commerce with atomic multi-table transactions, four-role Role-Based Access Control (RBAC), immutable historical price/item snapshots, audit logging, and automated expiry mechanisms.
+</p>
+
+<h2>2. System Architecture & High-Level Design</h2>
+<p>
+The application employs a <b>Modular Monolith</b> architecture. Rather than introducing premature microservice complexity or building isolated fragmented applications, the entire system is hosted in a single cohesive NestJS runtime with strictly defined domain boundaries and zero circular dependencies.
+</p>
+
+<div class="callout">
+  <b>Core Architectural Principles:</b>
+  <ul>
+    <li><b>Controller &rarr; Service &rarr; Repository</b>: Controllers handle HTTP serialization and Swagger docs; Services execute domain rules and transactional orchestration; TypeORM Repositories manage database persistence.</li>
+    <li><b>Immutable Snapshots</b>: Order items freeze variant names, SKU codes, sizes, colors, and unit prices at purchase time, ensuring historical purchases remain accurate even if catalog prices change later.</li>
+    <li><b>Integer Minor Units (BDT)</b>: Monetary values are strictly stored as integer minor units (e.g., 250,000 BDT minor units = 2,500.00 BDT) to eliminate floating-point rounding errors.</li>
+    <li><b>Strict Schema Migrations</b>: Automatic schema synchronization is disabled (<code>synchronize: false</code>). The relational schema is versioned across 11 migration files in <code>src/database/migrations</code>.</li>
+    <li><b>UUID Primary Keys</b>: All entities use cryptographic UUIDs (<code>gen_random_uuid()</code>) to prevent sequential ID guessing and enumeration attacks.</li>
+  </ul>
+</div>
+
+<h2>3. User Roles & Role-Based Access Control (RBAC)</h2>
+<p>
+THREAD enforces four authenticated roles plus an unauthenticated Guest browsing mode:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Role / Actor</th>
+      <th>Allowed Capabilities</th>
+      <th>Explicit Restrictions & Boundaries</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Guest</b></td>
+      <td>Public catalog browsing, product search/filter, customer registration, and login.</td>
+      <td>Cannot view customer orders, cart, or access private endpoints.</td>
+    </tr>
+    <tr>
+      <td><b>CUSTOMER</b></td>
+      <td>Manage delivery addresses, cart items, checkout, personal order history, rule-based size advice.</td>
+      <td>Cannot alter product prices, modify stock balances, or inspect other users' data.</td>
+    </tr>
+    <tr>
+      <td><b>STAFF</b></td>
+      <td>CRUD on products, variants, categories, collections, and size guides; publish products.</td>
+      <td>Cannot mutate stock balances, promote users, or modify payment statuses directly.</td>
+    </tr>
+    <tr>
+      <td><b>INVENTORY_MANAGER</b></td>
+      <td>Receive inventory receipts, execute stock count adjustments, process pack/ship logistics.</td>
+      <td>Cannot modify catalog prices, change account roles, or initiate customer refunds.</td>
+    </tr>
+    <tr>
+      <td><b>ADMIN</b> (Your Role)</td>
+      <td>Create and deactivate staff accounts, reassign roles, browse system audit logs, and view platform analytics.</td>
+      <td>Must operate through authorized business invariants and cannot bypass financial transaction rules.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>4. Module Breakdown by Team Ownership</h2>
+<p>
+The repository is partitioned into four clear development domains aligned with the four course project members:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Developer / Role</th>
+      <th>Owned Modules & Entities</th>
+      <th>Primary Business Outcomes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Developer A (Customer)</b></td>
+      <td><code>accounts</code>, <code>addresses</code>, <code>cart</code>, <code>checkout</code>, <code>orders</code>, <code>payments</code>, <code>size-recommendations</code></td>
+      <td>Customer address CRUD, user-scoped carts, transactional checkout, order snapshots, background unpaid-order expiry worker, simulated mock payments, and rule-based sizing.</td>
+    </tr>
+    <tr>
+      <td><b>Developer B (Staff)</b></td>
+      <td><code>catalog</code>, <code>categories</code>, <code>collections</code>, <code>size-guides</code></td>
+      <td>Product catalog management, variant SKU uniqueness, category hierarchy, collection bridges (M:N), and size-guide measurement brackets.</td>
+    </tr>
+    <tr>
+      <td><b>Developer C (Inventory)</b></td>
+      <td><code>inventory</code>, <code>stock-movements</code>, <code>fulfillment</code>, <code>shipments</code></td>
+      <td>SKU balance tracking (<code>on_hand</code>, <code>reserved</code>), row-locked reservation APIs, append-only stock movement logs, order packing, and shipping dispatch.</td>
+    </tr>
+    <tr>
+      <td><b>Developer D (Admin — You)</b></td>
+      <td><code>auth</code>, <code>users</code>, <code>roles</code>, <code>audit</code>, <code>analytics</code></td>
+      <td>Authentication foundation (JWT + bcrypt), RBAC guards, staff account administration, transactional audit logging, platform operational analytics, and admin seed script.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>5. Request & Response Lifecycle Pipeline</h2>
+<p>
+Every incoming HTTP request traverses a standardized NestJS middleware, guard, pipe, and interceptor pipeline:
+</p>
+<ol>
+  <li><b>RequestLoggingMiddleware</b>: Mounts before route handlers; generates a unique UUID <code>X-Request-ID</code> header, tracks latency, and logs client requests cleanly.</li>
+  <li><b>JwtAuthGuard & Passport Strategy</b>: Validates the Bearer token in the <code>Authorization</code> header; decodes claims and populates <code>req.user</code>.</li>
+  <li><b>RolesGuard</b>: Reads role metadata specified by the <code>@Roles(...)</code> decorator and denies access with a safe <code>403 Forbidden</code> if the user lacks the required role.</li>
+  <li><b>ValidationPipe</b>: Strips unwhitelisted properties (<code>whitelist: true, forbidNonWhitelisted: true</code>) and returns client-safe <code>400 Bad Request</code> with field-level validation errors.</li>
+  <li><b>HttpExceptionFilter</b>: Catches all exceptions (including PostgreSQL error code <code>23505</code> for unique violations) and wraps them into a unified, non-leaking error envelope.</li>
+</ol>
+
+<pre>
+Standard Success Envelope:
+{
+  "success": true,
+  "message": "OK",
+  "data": { ... },
+  "meta": {
+    "requestId": "6f2d7ea0-6df8-41f5-a28a-493bdaed806d",
+    "pagination": { "page": 1, "limit": 20, "total": 100, "totalPages": 5 }
+  }
+}
+
+Standard Error Envelope:
+{
+  "success": false,
+  "message": "Validation failed",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "details": [{ "field": "email", "message": "email must be an email" }]
+  },
+  "meta": { "requestId": "6f2d7ea0-6df8-41f5-a28a-493bdaed806d" }
+}
+</pre>
+
+<h2>6. Critical ACID Database Transactions (Course Requirement M2)</h2>
+<p>
+The project features two critical transactional workflows that guarantee data consistency and demonstrate advanced TypeORM transaction handling:
+</p>
+
+<h3>Scenario 1: High-Concurrency Customer Checkout</h3>
+<ol>
+  <li>Customer sends <code>POST /api/v1/checkout</code> with an <code>Idempotency-Key</code> header.</li>
+  <li>Validates delivery address ownership and cart contents.</li>
+  <li>Starts a database transaction via <code>DataSource.transaction()</code>.</li>
+  <li>Fetches authoritative prices from the catalog (ignoring client-side prices).</li>
+  <li>Acquires <b>pessimistic row locks</b> (<code>SELECT FOR UPDATE</code>) on all variant balance rows.</li>
+  <li>Verifies <code>on_hand - reserved &gt;= requested_quantity</code> for each item.</li>
+  <li>Increments <code>reserved</code> stock and inserts <code>stock_reservations</code> with an expiration timestamp.</li>
+  <li>Inserts the <code>orders</code> row (status: <code>PENDING_PAYMENT</code>) and frozen <code>order_items</code> snapshots.</li>
+  <li>Empties the customer's cart and saves an idempotency record.</li>
+  <li>Commits the transaction. If two customers simultaneously check out the last remaining item, exactly one succeeds and the other receives <code>409 Conflict</code> (insufficient stock). If any operation fails, all changes roll back immediately.</li>
+</ol>
+
+<h3>Scenario 2: Admin Staff Lifecycle & Audit Logging (Your Feature)</h3>
+<p>
+Whenever an Administrator creates, updates, or deactivates a staff member in <code>UsersService</code>:
+</p>
+<ol>
+  <li>Opens an explicit transaction via <code>this.dataSource.transaction(async manager =&gt; ...)</code>.</li>
+  <li>Saves or updates the staff user entity.</li>
+  <li>Calls <code>AuditService.record(..., manager)</code> to insert an immutable audit trail entry containing the actor's ID, action code (e.g., <code>STAFF_CREATED</code>, <code>STAFF_UPDATED</code>, <code>STAFF_DEACTIVATED</code>), and JSON snapshots of <code>before</code> and <code>after</code> states.</li>
+  <li>Both operations commit simultaneously. If the audit log fails to record, the staff account change is completely rolled back, guaranteeing an unalterable audit trail.</li>
+</ol>
+
+<h2>7. Admin Domain Endpoints Reference (Role D)</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Endpoint</th>
+      <th>HTTP Method</th>
+      <th>Access</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>/api/v1/auth/register</code></td>
+      <td>POST</td>
+      <td>Public</td>
+      <td>Registers a new customer. Role is strictly forced to <code>CUSTOMER</code>.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/auth/login</code></td>
+      <td>POST</td>
+      <td>Public</td>
+      <td>Verifies credentials against bcrypt password hashes and issues a JWT Bearer token.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/users/me</code></td>
+      <td>GET</td>
+      <td>Any Authenticated</td>
+      <td>Returns safe user profile (excluding password hash) for the current caller.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/staff</code></td>
+      <td>POST</td>
+      <td>ADMIN</td>
+      <td>Creates a new <code>STAFF</code> or <code>INVENTORY_MANAGER</code> account with an audited record.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/staff</code></td>
+      <td>GET</td>
+      <td>ADMIN</td>
+      <td>Returns paginated list of staff accounts with optional filtering by role and status.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/staff/:id</code></td>
+      <td>GET</td>
+      <td>ADMIN</td>
+      <td>Retrieves detailed profile information for a specific staff member.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/staff/:id</code></td>
+      <td>PATCH</td>
+      <td>ADMIN</td>
+      <td>Updates staff name, role, or status with before/after state capture in audit logs.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/staff/:id</code></td>
+      <td>DELETE</td>
+      <td>ADMIN</td>
+      <td>Deactivates (soft-deletes) staff member by setting status to <code>INACTIVE</code> and writes audit log.</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/audit-logs</code></td>
+      <td>GET</td>
+      <td>ADMIN</td>
+      <td>Browses paginated system audit log entries with filter options (by action, entity, actor).</td>
+    </tr>
+    <tr>
+      <td><code>/api/v1/admin/analytics/summary</code></td>
+      <td>GET</td>
+      <td>ADMIN</td>
+      <td>Returns high-level platform statistics: user counts by role/status, audit volume, and catalog/order totals.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>8. Project Dependencies & Libraries</h2>
+<p>
+The project relies on production-grade Node.js and TypeScript packages:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Version</th>
+      <th>Purpose & Operational Function</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@nestjs/core</code>, <code>@nestjs/common</code></td>
+      <td>^11.2.8</td>
+      <td>Core NestJS framework, dependency injection, lifecycle management, controllers, and services.</td>
+    </tr>
+    <tr>
+      <td><code>@nestjs/typeorm</code>, <code>typeorm</code></td>
+      <td>^11.0.3, ^1.1.2</td>
+      <td>Database ORM providing entity mapping, migrations, query builders, and transaction managers.</td>
+    </tr>
+    <tr>
+      <td><code>pg</code></td>
+      <td>^8.0.0</td>
+      <td>Low-level PostgreSQL connection and communication driver.</td>
+    </tr>
+    <tr>
+      <td><code>@nestjs/jwt</code>, <code>passport-jwt</code></td>
+      <td>^11.0.0, ^4.0.1</td>
+      <td>JSON Web Token issuance, signing, and bearer authentication strategy integration.</td>
+    </tr>
+    <tr>
+      <td><code>bcrypt</code></td>
+      <td>^6.0.0</td>
+      <td>One-way cryptographic password hashing using 12 salt rounds.</td>
+    </tr>
+    <tr>
+      <td><code>class-validator</code>, <code>class-transformer</code></td>
+      <td>^0.14.0, ^0.5.1</td>
+      <td>Decorators for DTO validation and input transformation.</td>
+    </tr>
+    <tr>
+      <td><code>@nestjs/swagger</code></td>
+      <td>^11.0.0</td>
+      <td>Automated OpenAPI specification generation and Swagger interactive documentation.</td>
+    </tr>
+    <tr>
+      <td><code>joi</code></td>
+      <td>^18.0.0</td>
+      <td>Schema-based environment variable validation on server bootstrap.</td>
+    </tr>
+    <tr>
+      <td><code>nodemailer</code></td>
+      <td>^10.5.0</td>
+      <td>Email delivery transport for customer order confirmations.</td>
+    </tr>
+    <tr>
+      <td><code>jest</code>, <code>supertest</code></td>
+      <td>^30.0.0, ^7.0.0</td>
+      <td>Unit testing framework and HTTP integration/E2E test assertion harness.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>9. Viva Presentation & Defense Guide</h2>
+<div class="callout">
+  <b>Top Viva Questions & Strategic Answers:</b>
+  <ol>
+    <li>
+      <b>Q: What did you personally develop in this group project?</b><br>
+      <i>A: "I developed the Admin domain (Developer D). My deliverables include the shared authentication foundation with bcrypt password hashing and JWT token issuance, RBAC guards with the custom <code>@Roles()</code> and <code>@Actor()</code> decorators, complete staff account management (<code>/admin/staff</code>), the centralized audit log system with before/after diff tracking (<code>audit_logs</code> table and <code>/admin/audit-logs</code>), and administrative platform analytics."</i>
+    </li>
+    <li>
+      <b>Q: How did you implement database transactions in your domain?</b><br>
+      <i>A: "In <code>UsersService</code>, staff creation, role modification, and deactivation run inside an atomic database transaction using <code>this.dataSource.transaction()</code>. The user record update and the audit log insertion execute in the same transaction. If audit logging fails, the user changes roll back immediately."</i>
+    </li>
+    <li>
+      <b>Q: How do you prevent privilege escalation?</b><br>
+      <i>A: "Public registration (<code>POST /auth/register</code>) hardcodes the role to <code>CUSTOMER</code> and ignores any role parameter in the body. Staff accounts can only be created by an authenticated administrator through <code>POST /admin/staff</code>, which is protected by <code>JwtAuthGuard</code> and <code>RolesGuard</code> with <code>@Roles([UserRole.ADMIN])</code>."</i>
+    </li>
+    <li>
+      <b>Q: Why do you store money in integer minor units?</b><br>
+      <i>A: "Standard floating-point numbers in computers suffer from IEEE 754 precision issues (e.g., 0.1 + 0.2 = 0.30000000000000004). Storing money as integer minor units (such as 250,000 for 2,500.00 BDT) guarantees exact arithmetic with zero rounding error."</i>
+    </li>
+  </ol>
+</div>
+
+</body>
+</html>

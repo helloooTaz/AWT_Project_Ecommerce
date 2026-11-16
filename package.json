@@ -21,7 +21,8 @@
     "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "db:migrate:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "db:migrate:prod": "typeorm migration:run -d dist/database/data-source.js",
-    "seed:admin": "ts-node src/database/seeds/seed-admin.ts"
+    "seed:admin": "ts-node src/database/seeds/seed-admin.ts",
+    "seed:sql": "ts-node src/database/seeds/run-sql-seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.8",
