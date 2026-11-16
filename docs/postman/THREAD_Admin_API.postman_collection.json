@@ -1,0 +1,282 @@
+{
+  "info": {
+    "name": "THREAD - Admin & Auth API",
+    "description": "Postman Collection for testing Admin and Auth endpoints of the THREAD Commerce API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "staffId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth - Admin Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData && jsonData.data && jsonData.data.accessToken) {",
+              "    pm.collectionVariables.set('adminToken', jsonData.data.accessToken);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@thread.local\",\n  \"password\": \"AdminPass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        }
+      }
+    },
+    {
+      "name": "2. Users - Get Safe Profile (GET /users/me)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["users", "me"]
+        }
+      }
+    },
+    {
+      "name": "3. Admin - Create Staff Account (POST /admin/staff)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData && jsonData.data && jsonData.data.id) {",
+              "    pm.collectionVariables.set('staffId', jsonData.data.id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"staff.alice@thread.local\",\n  \"fullName\": \"Alice Staff\",\n  \"password\": \"StaffPass123!\",\n  \"role\": \"STAFF\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff"]
+        }
+      }
+    },
+    {
+      "name": "4. Admin - List Staff (GET /admin/staff)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff?page=1&limit=20",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "20" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. Admin - Get Staff Detail (GET /admin/staff/:id)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff/{{staffId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff", "{{staffId}}"]
+        }
+      }
+    },
+    {
+      "name": "6. Admin - Update Staff (PATCH /admin/staff/:id)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Alice Senior Staff\",\n  \"role\": \"INVENTORY_MANAGER\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff/{{staffId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff", "{{staffId}}"]
+        }
+      }
+    },
+    {
+      "name": "7. Admin - Deactivate Staff (DELETE /admin/staff/:id)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff/{{staffId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff", "{{staffId}}"]
+        }
+      }
+    },
+    {
+      "name": "8. Admin - Browse Audit Logs (GET /admin/audit-logs)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/admin/audit-logs?page=1&limit=20",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "audit-logs"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "20" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "9. Admin - Platform Analytics (GET /admin/analytics/summary)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/admin/analytics/summary",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "analytics", "summary"]
+        }
+      }
+    },
+    {
+      "name": "10. Security Demo - 401 Unauthorized (No Token)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff"]
+        }
+      }
+    },
+    {
+      "name": "11. Security Demo - Register Customer",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"customer.bob@example.com\",\n  \"fullName\": \"Bob Customer\",\n  \"password\": \"CustomerPass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        }
+      }
+    },
+    {
+      "name": "12. Security Demo - Login Customer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData && jsonData.data && jsonData.data.accessToken) {",
+              "    pm.collectionVariables.set('customerToken', jsonData.data.accessToken);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"customer.bob@example.com\",\n  \"password\": \"CustomerPass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        }
+      }
+    },
+    {
+      "name": "13. Security Demo - 403 Forbidden (Customer hitting Admin route)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/admin/staff",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "staff"]
+        }
+      }
+    }
+  ]
+}
