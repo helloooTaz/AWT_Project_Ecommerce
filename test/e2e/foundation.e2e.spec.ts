@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   Post,
   type INestApplication,
@@ -12,8 +13,11 @@ import { Test } from '@nestjs/testing';
 import { IsInt, Min } from 'class-validator';
 import request from 'supertest';
 import type { Server } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import { QueryFailedError } from 'typeorm';
 import { configureApp } from '../../src/app.setup';
+import { successResponse } from '../../src/common/dto/success-response';
+import { RequestLoggingMiddleware } from '../../src/common/middleware/request-logging.middleware';
 import { HealthController } from '../../src/health.controller';
 
 class TestDto {
@@ -25,8 +29,9 @@ class TestDto {
 @Controller('test')
 class TestController {
   @Post()
-  create(@Body() body: TestDto) {
-    return body;
+  async create(@Body() body: TestDto) {
+    await delay(body.quantity);
+    return successResponse(body);
   }
 
   @Get('missing')
@@ -73,6 +78,7 @@ describe('HTTP foundation', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [HealthController, TestController],
+      providers: [RequestLoggingMiddleware],
     }).compile();
 
     app = module.createNestApplication<INestApplication<Server>>();
@@ -95,6 +101,11 @@ describe('HTTP foundation', () => {
       data: { status: 'ok' },
       meta: { requestId },
     });
+    expect(response.headers['x-request-id']).toMatch(uuid);
+    expect(response.body).toHaveProperty(
+      'meta.requestId',
+      response.headers['x-request-id'],
+    );
   });
 
   it('returns a consistent error for an unknown route', async () => {
@@ -108,6 +119,71 @@ describe('HTTP foundation', () => {
       error: { code: 'NOT_FOUND', details: [] },
       meta: { requestId },
     });
+    expect(response.headers['x-request-id']).toMatch(uuid);
+    expect(response.body).toHaveProperty(
+      'meta.requestId',
+      response.headers['x-request-id'],
+    );
+  });
+
+  it('correlates concurrent asynchronous responses independently', async () => {
+    const responses = await Promise.all(
+      [30, 15, 1].map((quantity) =>
+        request(app.getHttpServer())
+          .post('/api/v1/test')
+          .set('X-Request-ID', 'untrusted-client-id')
+          .send({ quantity })
+          .expect(201),
+      ),
+    );
+    const ids = responses.map((response) => {
+      const id: unknown = response.headers['x-request-id'];
+      expect(id).toMatch(uuid);
+      expect(response.body).toHaveProperty('meta.requestId', id);
+      return id;
+    });
+    expect(new Set(ids).size).toBe(responses.length);
+  });
+
+  it('logs completed requests without headers, query parameters or bodies', async () => {
+    const log = jest
+      .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => {});
+    try {
+      const ok = await request(app.getHttpServer())
+        .get('/api/v1/health')
+        .expect(200);
+      const failed = await request(app.getHttpServer())
+        .post('/api/v1/test?token=private-query')
+        .set('Authorization', 'Bearer private-token')
+        .set('Cookie', 'session=private-cookie')
+        .set('X-Mock-Payment-Signature', 'private-signature')
+        .send({ quantity: 0, password: 'private-password' })
+        .expect(400);
+      const durationMs: unknown = expect.any(Number);
+      expect(log).toHaveBeenCalledTimes(2);
+      expect(log).toHaveBeenNthCalledWith(1, {
+        method: 'GET',
+        path: '/api/v1/health',
+        requestId: ok.headers['x-request-id'],
+        statusCode: 200,
+        durationMs,
+      });
+      expect(log).toHaveBeenNthCalledWith(2, {
+        method: 'POST',
+        path: '/api/v1/test',
+        requestId: failed.headers['x-request-id'],
+        statusCode: 400,
+        durationMs,
+      });
+      for (const [entry] of log.mock.calls) {
+        expect(
+          (entry as { durationMs: number }).durationMs,
+        ).toBeGreaterThanOrEqual(0);
+      }
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it.each([
@@ -160,6 +236,11 @@ describe('HTTP foundation', () => {
       error: { code: 'BAD_REQUEST', details: [] },
       meta: { requestId },
     });
+    expect(response.headers['x-request-id']).toMatch(uuid);
+    expect(response.body).toHaveProperty(
+      'meta.requestId',
+      response.headers['x-request-id'],
+    );
   });
 
   it('hides unexpected exception messages', async () => {
@@ -189,9 +270,13 @@ describe('HTTP foundation', () => {
   });
 
   it('serves Swagger outside the versioned API prefix', async () => {
-    await request(app.getHttpServer()).get('/api/docs').expect(200);
+    await request(app.getHttpServer())
+      .get('/api/docs')
+      .expect('X-Request-ID', uuid)
+      .expect(200);
     const response = await request(app.getHttpServer())
       .get('/api/docs-json')
+      .expect('X-Request-ID', uuid)
       .expect(200);
 
     expect(response.body).toHaveProperty(['paths', '/api/v1/health', 'get']);

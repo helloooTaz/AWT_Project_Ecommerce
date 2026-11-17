@@ -14,15 +14,18 @@ export const InventoryActor = createParamDecorator(
     const request = ctx
       .switchToHttp()
       .getRequest<
-        Request & { user?: { id?: string; email?: string; role?: string } }
+        Request & {
+          user?: { id?: string; sub?: string; email?: string; role?: string };
+        }
       >();
     const user = request.user;
-    if (!user || !user.id) {
+    const actorId = user?.id ?? user?.sub;
+    if (!user || !actorId) {
       return undefined;
     }
 
     return {
-      id: user.id,
+      id: actorId,
       email: user.email ?? 'unknown@thread.local',
       role: user.role ?? 'INVENTORY_MANAGER',
       ip: request.ip,

@@ -97,7 +97,7 @@ export class FulfillmentService {
         : null;
 
       const snap = order.shippingAddressSnapshot;
-      emailRecipient = snap?.email || user?.email || 'customer@thread.local';
+      emailRecipient = user?.email || 'customer@thread.local';
       customerName = snap?.recipient || user?.fullName || 'Valued Customer';
 
       await this.inventoryService.consumeForShipment(manager, orderId, actorId);

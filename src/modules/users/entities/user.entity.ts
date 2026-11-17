@@ -6,7 +6,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
-import { Role } from '../../../common/enums/role.enum';
+import { UserRole } from '../../roles/user-role.enum';
 
 export enum UserStatus {
   ACTIVE = 'ACTIVE',
@@ -30,11 +30,11 @@ export class User {
 
   @Column({
     type: 'enum',
-    enum: Role,
+    enum: UserRole,
     enumName: 'user_role',
-    default: Role.CUSTOMER,
+    default: UserRole.CUSTOMER,
   })
-  role!: Role;
+  role!: UserRole;
 
   @Column({
     type: 'enum',
@@ -42,7 +42,7 @@ export class User {
     enumName: 'user_status',
     default: UserStatus.ACTIVE,
   })
-  status!: UserStatus | string;
+  status!: UserStatus;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

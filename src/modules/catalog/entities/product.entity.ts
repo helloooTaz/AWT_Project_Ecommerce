@@ -43,7 +43,7 @@ export class Product {
   @Column({ type: 'varchar', length: 160 })
   slug!: string;
 
-  @Column({ type: 'text', default: '' })
+  @Column({ type: 'text' })
   description!: string;
 
   @Column({
@@ -52,7 +52,7 @@ export class Product {
     enumName: 'product_status',
     default: ProductStatus.DRAFT,
   })
-  status!: ProductStatus | string;
+  status!: ProductStatus;
 
   @OneToMany(() => ProductVariant, (variant) => variant.product)
   variants!: Relation<ProductVariant[]>;

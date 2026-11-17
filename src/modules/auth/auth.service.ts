@@ -1,75 +1,33 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import * as bcrypt from 'bcrypt';
-import { UserEntity } from '../users/entities/user.entity';
-import { LoginDto } from './dto/login.dto';
-import { Role } from '../../common/enums/role.enum';
-
-export interface JwtPayload {
-  sub: string;
-  email: string;
-  role: Role;
-}
+import { compare, hash } from 'bcrypt';
+import { UsersService } from '../users/users.service';
+import type { LoginDto } from './dto/login.dto';
+import type { RegisterDto } from './dto/register.dto';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly jwtService: JwtService,
-    @InjectRepository(UserEntity)
-    private readonly userRepo: Repository<UserEntity>,
+    private readonly users: UsersService,
+    private readonly jwt: JwtService,
   ) {}
 
-  async signPayload(payload: JwtPayload): Promise<string> {
-    return this.jwtService.signAsync(payload);
+  async register(input: RegisterDto) {
+    const passwordHash = await hash(input.password, 12);
+    return this.users.createCustomer(
+      input.email.toLowerCase(),
+      input.fullName.trim(),
+      passwordHash,
+    );
   }
 
-  async verifyToken(token: string): Promise<JwtPayload> {
-    try {
-      const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
-      if (!payload.sub || !payload.email || !payload.role) {
-        throw new UnauthorizedException();
-      }
-
-      const user = await this.userRepo.findOne({ where: { id: payload.sub } });
-      if (
-        !user ||
-        user.status !== 'ACTIVE' ||
-        user.email !== payload.email ||
-        user.role !== payload.role
-      ) {
-        throw new UnauthorizedException();
-      }
-
-      return payload;
-    } catch {
-      throw new UnauthorizedException('Invalid or expired authentication token');
+  async login(input: LoginDto) {
+    const user = await this.users.findActiveCredentials(
+      input.email.toLowerCase(),
+    );
+    if (!user || !(await compare(input.password, user.passwordHash))) {
+      throw new UnauthorizedException('Invalid email or password');
     }
-  }
-
-  async login(dto: LoginDto): Promise<{ accessToken: string; user: { id: string; email: string; role: Role } }> {
-    const user = await this.userRepo
-      .createQueryBuilder('user')
-      .addSelect('user.passwordHash')
-      .where('user.email = :email', { email: dto.email })
-      .getOne();
-
-    if (!user || user.status !== 'ACTIVE') {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const isValid = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!isValid) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const payload: JwtPayload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    };
-    const accessToken = await this.signPayload(payload);
-    return { accessToken, user: { id: user.id, email: user.email, role: user.role } };
+    return { accessToken: await this.jwt.signAsync({ sub: user.id }) };
   }
 }

@@ -1,9 +1,9 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class CreateStockMovementsAndShipments1794470400010
+export class CreateStockMovementsAndShipments1794470400011
   implements MigrationInterface
 {
-  name = 'CreateStockMovementsAndShipments1794470400010';
+  name = 'CreateStockMovementsAndShipments1794470400011';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. stock_movements table

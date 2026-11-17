@@ -56,25 +56,20 @@ export class OrderItem {
   @Column({ name: 'name_snapshot', type: 'varchar', length: 160 })
   nameSnapshot!: string;
 
-  @Column({ name: 'size_snapshot', type: 'varchar', length: 32, default: 'M' })
+  @Column({ name: 'size_snapshot', type: 'varchar', length: 32 })
   sizeSnapshot!: string;
 
-  @Column({
-    name: 'color_snapshot',
-    type: 'varchar',
-    length: 64,
-    default: 'Standard',
-  })
+  @Column({ name: 'color_snapshot', type: 'varchar', length: 64 })
   colorSnapshot!: string;
 
   @Column({ name: 'unit_price_minor', type: 'bigint' })
-  unitPriceMinor!: string | number;
+  unitPriceMinor!: string;
 
   @Column({ type: 'integer' })
   quantity!: number;
 
   @Column({ name: 'line_total_minor', type: 'bigint' })
-  lineTotalMinor!: string | number;
+  lineTotalMinor!: string;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

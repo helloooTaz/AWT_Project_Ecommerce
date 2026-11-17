@@ -26,12 +26,10 @@ export enum OrderStatus {
 
 export interface ShippingAddressSnapshot {
   recipient: string;
-  phone?: string;
-  addressLine1?: string;
-  addressLine2?: string | null;
+  phone: string;
+  addressLine1: string;
+  addressLine2: string | null;
   city: string;
-  email?: string;
-  addressLine?: string;
 }
 
 @Entity('orders')
@@ -58,13 +56,13 @@ export class Order {
   status!: OrderStatus;
 
   @Column({ type: 'varchar', length: 3, default: 'BDT' })
-  currency!: string;
+  currency!: 'BDT';
 
-  @Column({ name: 'total_minor', type: 'bigint', default: '0' })
-  totalMinor!: string | number;
+  @Column({ name: 'total_minor', type: 'bigint' })
+  totalMinor!: string;
 
-  @Column({ name: 'shipping_address_snapshot', type: 'jsonb', nullable: true })
-  shippingAddressSnapshot!: ShippingAddressSnapshot | null;
+  @Column({ name: 'shipping_address_snapshot', type: 'jsonb' })
+  shippingAddressSnapshot!: ShippingAddressSnapshot;
 
   @OneToMany(() => OrderItem, (item) => item.order)
   items!: Relation<OrderItem[]>;

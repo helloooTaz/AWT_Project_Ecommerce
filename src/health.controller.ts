@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { successResponse } from './common/dto/success-response';
 
 @ApiTags('Health')
 @Controller('health')
@@ -18,11 +18,6 @@ export class HealthController {
     },
   })
   check() {
-    return {
-      success: true,
-      message: 'OK',
-      data: { status: 'ok' },
-      meta: { requestId: randomUUID() },
-    };
+    return successResponse({ status: 'ok' });
   }
 }

@@ -1,16 +1,25 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RequestLoggingMiddleware } from './common/middleware/request-logging.middleware';
 import { validateEnvironment, type Environment } from './config/env.validation';
 import { databaseOptions } from './database/database.options';
 import { HealthController } from './health.controller';
+import { AccountsModule } from './modules/accounts/accounts.module';
+import { AddressesModule } from './modules/addresses/addresses.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { InventoryModule } from './modules/inventory/inventory.module';
-import { StockMovementsModule } from './modules/stock-movements/stock-movements.module';
+import { CartModule } from './modules/cart/cart.module';
+import { CheckoutModule } from './modules/checkout/checkout.module';
 import { FulfillmentModule } from './modules/fulfillment/fulfillment.module';
-import { ShipmentsModule } from './modules/shipments/shipments.module';
-import { CatalogModule } from './modules/catalog/catalog.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { ShipmentsModule } from './modules/shipments/shipments.module';
+import { SizeRecommendationModule } from './modules/size-recommendations/size-recommendation.module';
+import { StockMovementsModule } from './modules/stock-movements/stock-movements.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -21,13 +30,22 @@ import { OrdersModule } from './modules/orders/orders.module';
         databaseOptions(config.get('DATABASE_URL', { infer: true })),
     }),
     AuthModule,
-    CatalogModule,
+    UsersModule,
+    AuditModule,
+    AnalyticsModule,
+    AccountsModule,
+    AddressesModule,
+    CartModule,
     OrdersModule,
+    CheckoutModule,
+    PaymentsModule,
+    SizeRecommendationModule,
     InventoryModule,
     StockMovementsModule,
     FulfillmentModule,
     ShipmentsModule,
   ],
   controllers: [HealthController],
+  providers: [RequestLoggingMiddleware],
 })
 export class AppModule {}

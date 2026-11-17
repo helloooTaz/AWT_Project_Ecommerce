@@ -1,6 +1,1 @@
-export enum Role {
-  CUSTOMER = 'CUSTOMER',
-  STAFF = 'STAFF',
-  INVENTORY_MANAGER = 'INVENTORY_MANAGER',
-  ADMIN = 'ADMIN',
-}
+export { UserRole as Role } from '../../modules/roles/user-role.enum';
