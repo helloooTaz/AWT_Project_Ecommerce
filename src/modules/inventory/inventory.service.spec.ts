@@ -4,7 +4,6 @@ import { DataSource } from 'typeorm';
 import { CatalogService } from '../catalog/catalog.service';
 import { StockMovementsService } from '../stock-movements/stock-movements.service';
 import { InventoryBalanceEntity } from './entities/inventory-balance.entity';
-import { StockReservationEntity } from './entities/stock-reservation.entity';
 import { InventoryService } from './inventory.service';
 
 describe('InventoryService', () => {
@@ -15,7 +14,6 @@ describe('InventoryService', () => {
       providers: [
         InventoryService,
         { provide: getRepositoryToken(InventoryBalanceEntity), useValue: {} },
-        { provide: getRepositoryToken(StockReservationEntity), useValue: {} },
         { provide: StockMovementsService, useValue: {} },
         { provide: CatalogService, useValue: {} },
         { provide: DataSource, useValue: {} },

@@ -83,7 +83,6 @@ export class StockProjectionInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       map((response: unknown) => {
-        // If response is a paginated wrapper: { items: RawStockItem[], pagination: {...} }
         if (
           typeof response === 'object' &&
           response !== null &&
@@ -102,7 +101,6 @@ export class StockProjectionInterceptor implements NestInterceptor {
           };
         }
 
-        // If response is an array of RawStockItem
         if (Array.isArray(response)) {
           return {
             success: true,
@@ -112,7 +110,6 @@ export class StockProjectionInterceptor implements NestInterceptor {
           };
         }
 
-        // If response is a single RawStockItem
         if (isRawStockItem(response)) {
           return {
             success: true,

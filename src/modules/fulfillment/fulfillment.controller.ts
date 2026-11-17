@@ -87,8 +87,8 @@ export class FulfillmentController {
   })
   async createShipment(
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateShipmentDto,
     @InventoryActor() actor?: InventoryActorContext,
-    @Body() dto?: CreateShipmentDto,
   ) {
     return this.fulfillmentService.createShipment(id, actor?.id, dto);
   }

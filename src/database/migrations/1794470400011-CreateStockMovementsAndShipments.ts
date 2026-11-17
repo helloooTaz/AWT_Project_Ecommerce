@@ -6,7 +6,6 @@ export class CreateStockMovementsAndShipments1794470400011
   name = 'CreateStockMovementsAndShipments1794470400011';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // 1. stock_movements table
     await queryRunner.query(`
       DO $$ BEGIN
         CREATE TYPE "stock_movements_type_enum" AS ENUM (
@@ -40,7 +39,6 @@ export class CreateStockMovementsAndShipments1794470400011
       ON "stock_movements" ("actor_id");
     `);
 
-    // 2. shipments table
     await queryRunner.query(`
       DO $$ BEGIN
         CREATE TYPE "shipments_status_enum" AS ENUM (

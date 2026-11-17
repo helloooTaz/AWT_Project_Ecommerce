@@ -40,17 +40,11 @@ export class InventoryService {
   constructor(
     @InjectRepository(InventoryBalanceEntity)
     private readonly balanceRepo: Repository<InventoryBalanceEntity>,
-    @InjectRepository(StockReservationEntity)
-    private readonly reservationRepo: Repository<StockReservationEntity>,
     private readonly stockMovementsService: StockMovementsService,
     private readonly catalogService: CatalogService,
     private readonly dataSource: DataSource,
-  ) { }
+  ) {}
 
-  /**
-   * Helper: Locks a single variant's inventory balance row (SELECT ... FOR UPDATE)
-   * so two transactions cannot modify the same SKU stock at the same time.
-   */
   private async lockBalance(
     manager: EntityManager,
     variantId: string,
@@ -63,10 +57,6 @@ export class InventoryService {
       .getOne();
   }
 
-  /**
-   * 1. Used by Customer Cart & Size Recommendation:
-   * Returns available stock (onHand - reserved) for a list of variant IDs.
-   */
   async getAvailability(variantIds: string[]): Promise<Map<string, number>> {
     if (!variantIds || variantIds.length === 0) {
       return new Map();
@@ -76,7 +66,6 @@ export class InventoryService {
       variantId: In(variantIds),
     });
 
-    // Default every requested variant to 0, then fill in existing balances
     const availability = new Map(variantIds.map((id) => [id, 0]));
     for (const balance of balances) {
       availability.set(balance.variantId, balance.onHand - balance.reserved);
@@ -85,13 +74,9 @@ export class InventoryService {
     return availability;
   }
 
-  /**
-   * 2. GET /api/v1/inventory
-   * Returns a paginated list of inventory balances.
-   */
   async getOverview(query: InventoryQueryDto) {
-    const page = Math.max(1, Number(query.page || 1));
-    const limit = Math.min(100, Math.max(1, Number(query.limit || 20)));
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
     const where: FindOptionsWhere<InventoryBalanceEntity> = {};
@@ -117,10 +102,6 @@ export class InventoryService {
     };
   }
 
-  /**
-   * 3. GET /api/v1/inventory/:variantId
-   * Returns the stock balance for one specific variant.
-   */
   async getByVariantId(variantId: string): Promise<InventoryBalanceEntity> {
     const balance = await this.balanceRepo.findOne({ where: { variantId } });
     if (!balance) {
@@ -131,10 +112,6 @@ export class InventoryService {
     return balance;
   }
 
-  /**
-   * 4. POST /api/v1/inventory/receipts
-   * Receives new stock into the warehouse, increases onHand, and logs a RECEIPT movement.
-   */
   async receiveStock(
     actorId: string | null,
     dto: CreateReceiptDto,
@@ -172,11 +149,6 @@ export class InventoryService {
     });
   }
 
-  /**
-   * 5. POST /api/v1/inventory/adjustments
-   * Adjusts stock (positive or negative delta) while preventing negative stock
-   * or dropping onHand below currently reserved units.
-   */
   async adjustStock(
     actorId: string | null,
     dto: CreateAdjustmentDto,
@@ -223,16 +195,11 @@ export class InventoryService {
     });
   }
 
-  /**
-   * 6. Cross-Domain Method for Customer Checkout:
-   * Reserves stock inside the caller's database transaction using row-level locks.
-   */
   async reserveForOrder(
     manager: EntityManager,
     items: readonly StockReservationItem[],
     expiresAt: Date,
   ): Promise<StockReservation[]> {
-    // Step 1: Must run inside an active database transaction
     if (
       manager.queryRunner !== undefined &&
       !manager.queryRunner.isTransactionActive
@@ -248,7 +215,6 @@ export class InventoryService {
       throw new BadRequestException('Reservation expiration is invalid');
     }
 
-    // Step 2: Validate positive quantities and check for duplicate orderItemIds
     const lines = items.map((item) => {
       if (item.quantity <= 0) {
         throw new ConflictException(
@@ -267,7 +233,6 @@ export class InventoryService {
       throw new ConflictException('Order item already has a reservation');
     }
 
-    // Step 3: Verify that every requested reservation matches a saved OrderItem in the DB
     const persistedItems = await manager.getRepository(OrderItemEntity).find({
       where: { id: In(orderItemIds) },
     });
@@ -287,7 +252,6 @@ export class InventoryService {
       }
     }
 
-    // Step 4: Check if any of these order items already have a reservation
     const reservationRepo = manager.getRepository(StockReservationEntity);
     const existing = await reservationRepo.find({
       where: { orderItemId: In(orderItemIds) },
@@ -296,8 +260,6 @@ export class InventoryService {
       throw new ConflictException('Order item already has a reservation');
     }
 
-    // Step 5: Group total requested quantity by variantId and sort variantIds alphabetically
-    // (Sorting variantIds prevents deadlocks when two carts lock the same variants)
     const quantityByVariant = new Map<string, number>();
     for (const line of lines) {
       const current = quantityByVariant.get(line.variantId) ?? 0;
@@ -308,7 +270,6 @@ export class InventoryService {
       a.localeCompare(b),
     );
 
-    // Step 6: Lock each variant balance row, check available stock, and increase reserved
     const balanceRepo = manager.getRepository(InventoryBalanceEntity);
     for (const variantId of sortedVariantIds) {
       const neededQuantity = quantityByVariant.get(variantId)!;
@@ -324,7 +285,6 @@ export class InventoryService {
       await balanceRepo.save(balance);
     }
 
-    // Step 7: Create and save an ACTIVE StockReservation row for each order item
     const createdReservations: StockReservationEntity[] = [];
     for (const line of lines) {
       const reservation = reservationRepo.create({
@@ -340,10 +300,6 @@ export class InventoryService {
     return createdReservations;
   }
 
-  /**
-   * 7. Cross-Domain Method for Order Cancellation / Payment Expiry:
-   * Releases ACTIVE reservations and subtracts from reserved (leaving onHand unchanged).
-   */
   async releaseForOrder(
     manager: EntityManager,
     orderId: string,
@@ -372,7 +328,6 @@ export class InventoryService {
       return;
     }
 
-    // Group quantities to release by variantId in sorted order
     const quantitiesByVariant = new Map<string, number>();
     for (const res of reservations) {
       const current = quantitiesByVariant.get(res.variantId) ?? 0;
@@ -409,10 +364,6 @@ export class InventoryService {
     }
   }
 
-  /**
-   * 8. Cross-Domain Method for Warehouse Shipment:
-   * Marks ACTIVE reservations as CONSUMED and subtracts from BOTH onHand and reserved.
-   */
   async consumeForShipment(
     manager: EntityManager,
     orderId: string,
@@ -439,7 +390,6 @@ export class InventoryService {
       .addOrderBy('res.orderItemId', 'ASC')
       .getMany();
 
-    // Ensure every order item has a matching active reservation
     const reservationByItemId = new Map(
       activeReservations.map((r) => [r.orderItemId, r]),
     );

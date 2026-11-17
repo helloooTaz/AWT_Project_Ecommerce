@@ -15,27 +15,13 @@ export class ShipmentEmailService {
 
   private readonly sentEmails: ShipmentEmailPayload[] = [];
 
-  async sendShipmentNotification(
-    payload: ShipmentEmailPayload,
-  ): Promise<boolean> {
-    try {
-      this.logger.log(
-        `[Shipment Email Stub] Recording notification for ${payload.toEmail}, order ${payload.orderId}, via ${payload.carrier} (Tracking: ${payload.trackingNumber})`,
-      );
+  sendShipmentNotification(payload: ShipmentEmailPayload): Promise<boolean> {
+    this.logger.log(
+      `[Shipment Email Stub] Recording notification for ${payload.toEmail}, order ${payload.orderId}, via ${payload.carrier} (Tracking: ${payload.trackingNumber})`,
+    );
 
-      this.sentEmails.push({ ...payload });
-
-      await Promise.resolve();
-      return true;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to send shipment notification for Order ${payload.orderId}: ${message}`,
-        stack,
-      );
-      return false;
-    }
+    this.sentEmails.push({ ...payload });
+    return Promise.resolve(true);
   }
 
   getDispatchedEmails(): ShipmentEmailPayload[] {

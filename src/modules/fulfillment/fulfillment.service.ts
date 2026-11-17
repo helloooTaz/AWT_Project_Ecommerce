@@ -1,10 +1,9 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { ShipmentStatus } from '../../common/enums/shipment-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
-import { OrderStatus } from '../orders/entities/order.entity';
+import { Order, OrderStatus } from '../orders/entities/order.entity';
 import { OrdersService } from '../orders/orders.service';
 import { ShipmentEntity } from '../shipments/entities/shipment.entity';
 import { ShipmentEmailService } from '../shipments/shipment-email.service';
@@ -17,8 +16,6 @@ export class FulfillmentService {
   private readonly logger = new Logger(FulfillmentService.name);
 
   constructor(
-    @InjectRepository(ShipmentEntity)
-    private readonly shipmentRepo: Repository<ShipmentEntity>,
     private readonly ordersService: OrdersService,
     private readonly inventoryService: InventoryService,
     private readonly shipmentEmailService: ShipmentEmailService,
@@ -26,8 +23,8 @@ export class FulfillmentService {
   ) {}
 
   async listOrders(query: FulfillmentQueryDto) {
-    const page = Math.max(1, Number(query.page || 1));
-    const limit = Math.min(100, Math.max(1, Number(query.limit || 20)));
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
 
     const { orders, total } =
       await this.ordersService.listEligibleFulfillmentOrders(page, limit);
@@ -49,31 +46,32 @@ export class FulfillmentService {
     );
 
     return this.dataSource.transaction(async (manager) => {
-      const order = await this.ordersService.transitionStatus(
+      return this.ordersService.transitionStatus(
         manager,
         orderId,
         OrderStatus.PROCESSING,
       );
-      return order;
     });
   }
 
   async createShipment(
     orderId: string,
-    actorId?: string,
-    dto?: CreateShipmentDto,
+    actorId: string | undefined,
+    dto: CreateShipmentDto,
   ): Promise<ShipmentEntity> {
-    const carrier = dto?.carrier || 'Standard Courier';
+    const carrier = dto.carrier.trim();
     const trackingNumber =
-      dto?.trackingNumber ||
-      `TRK-${Date.now().toString(36).toUpperCase()}-${randomUUID().slice(0, 6).toUpperCase()}`;
+      dto.trackingNumber?.trim() || this.generateTrackingNumber();
 
-    let emailRecipient = 'customer@thread.local';
-    let customerName = 'Valued Customer';
+    let recipient = {
+      email: 'customer@thread.local',
+      name: 'Valued Customer',
+    };
 
     const savedShipment = await this.dataSource.transaction(async (manager) => {
-      const existing = await manager
-        .getRepository(ShipmentEntity)
+      const shipmentRepo = manager.getRepository(ShipmentEntity);
+
+      const existing = await shipmentRepo
         .createQueryBuilder('s')
         .setLock('pessimistic_write')
         .where('s.orderId = :orderId', { orderId })
@@ -91,18 +89,11 @@ export class FulfillmentService {
         OrderStatus.SHIPPED,
       );
 
-      const userRepo = manager.getRepository(User);
-      const user = userRepo
-        ? await userRepo.findOne({ where: { id: order.userId } })
-        : null;
-
-      const snap = order.shippingAddressSnapshot;
-      emailRecipient = user?.email || 'customer@thread.local';
-      customerName = snap?.recipient || user?.fullName || 'Valued Customer';
+      recipient = await this.resolveRecipient(manager, order);
 
       await this.inventoryService.consumeForShipment(manager, orderId, actorId);
 
-      const shipment = manager.getRepository(ShipmentEntity).create({
+      const shipment = shipmentRepo.create({
         orderId,
         carrier,
         trackingNumber,
@@ -110,7 +101,7 @@ export class FulfillmentService {
         shippedAt: new Date(),
       });
 
-      return manager.getRepository(ShipmentEntity).save(shipment);
+      return shipmentRepo.save(shipment);
     });
 
     this.logger.log(
@@ -118,8 +109,8 @@ export class FulfillmentService {
     );
 
     await this.shipmentEmailService.sendShipmentNotification({
-      toEmail: emailRecipient,
-      customerName,
+      toEmail: recipient.email,
+      customerName: recipient.name,
       orderId,
       carrier,
       trackingNumber,
@@ -127,5 +118,28 @@ export class FulfillmentService {
     });
 
     return savedShipment;
+  }
+
+  private generateTrackingNumber(): string {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const suffix = randomUUID().slice(0, 6).toUpperCase();
+    return `TRK-${timestamp}-${suffix}`;
+  }
+
+  private async resolveRecipient(
+    manager: EntityManager,
+    order: Order,
+  ): Promise<{ email: string; name: string }> {
+    const user = await manager
+      .getRepository(User)
+      .findOne({ where: { id: order.userId } });
+
+    return {
+      email: user?.email || 'customer@thread.local',
+      name:
+        order.shippingAddressSnapshot?.recipient ||
+        user?.fullName ||
+        'Valued Customer',
+    };
   }
 }

@@ -6,3 +6,12 @@ coverage/
 .env
 .env.*
 !.env.example
+.agents/rules/inventory-module.md
+docs/CSC4161_Project_Proposal.docx
+docs/PROJECT_SOURCE_OF_TRUTH.md
+docs/README_START_HERE.md
+docs/ROLE_ADMIN.md
+docs/ROLE_CUSTOMER.md
+docs/ROLE_INVENTORY.md
+docs/ROLE_STAFF.md
+docs/sample-code.zip
