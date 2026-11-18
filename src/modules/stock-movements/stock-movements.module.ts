@@ -11,4 +11,4 @@ import { AuthModule } from '../auth/auth.module';
   providers: [StockMovementsService],
   exports: [StockMovementsService, TypeOrmModule],
 })
-export class StockMovementsModule { }
+export class StockMovementsModule {}

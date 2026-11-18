@@ -11,12 +11,17 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CartModule } from './modules/cart/cart.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
+import { CategoriesModule } from './modules/categories/categories.module';
 import { CheckoutModule } from './modules/checkout/checkout.module';
+import { CollectionsModule } from './modules/collections/collections.module';
 import { FulfillmentModule } from './modules/fulfillment/fulfillment.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { ReturnsModule } from './modules/returns/returns.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
+import { SizeGuidesModule } from './modules/size-guides/size-guides.module';
 import { SizeRecommendationModule } from './modules/size-recommendations/size-recommendation.module';
 import { StockMovementsModule } from './modules/stock-movements/stock-movements.module';
 import { UsersModule } from './modules/users/users.module';
@@ -36,10 +41,15 @@ import { UsersModule } from './modules/users/users.module';
     AccountsModule,
     AddressesModule,
     CartModule,
+    CatalogModule,
+    CategoriesModule,
+    CollectionsModule,
     OrdersModule,
     CheckoutModule,
     PaymentsModule,
+    SizeGuidesModule,
     SizeRecommendationModule,
+    ReturnsModule,
     InventoryModule,
     StockMovementsModule,
     FulfillmentModule,

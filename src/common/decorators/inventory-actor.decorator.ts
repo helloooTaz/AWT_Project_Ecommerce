@@ -11,13 +11,11 @@ export interface InventoryActorContext {
 
 export const InventoryActor = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): InventoryActorContext | undefined => {
-    const request = ctx
-      .switchToHttp()
-      .getRequest<
-        Request & {
-          user?: { id?: string; sub?: string; email?: string; role?: string };
-        }
-      >();
+    const request = ctx.switchToHttp().getRequest<
+      Request & {
+        user?: { id?: string; sub?: string; email?: string; role?: string };
+      }
+    >();
     const user = request.user;
     const actorId = user?.id ?? user?.sub;
     if (!user || !actorId) {

@@ -102,7 +102,33 @@ Whenever an Administrator creates, updates, or deactivates a staff member in `Us
 
 ---
 
-## 8. Project Dependencies & Libraries
+## 8. Staff & Catalog Domain Endpoints Reference (Role B — Utso)
+
+| Endpoint | HTTP Method | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `/api/v1/products` | GET | Public | Paginated list of published products with active variants and price formatting. |
+| `/api/v1/products/:id` | GET | Public | Detailed published product view with active variants, category, and collections. |
+| `/api/v1/categories` | GET | Public | Browsable active categories list. |
+| `/api/v1/collections` | GET | Public | Browsable active marketing collections list with product links. |
+| `/api/v1/products/:id/size-guide` | GET | Public | Public measurement brackets and fit guide for a product. |
+| `/api/v1/staff/products` | POST | STAFF, ADMIN | Creates product in `DRAFT` status with optional initial variants in an atomic transaction. |
+| `/api/v1/staff/products` | GET | STAFF, ADMIN | Paginated list of all products across all statuses (`DRAFT`, `PUBLISHED`, `ARCHIVED`). |
+| `/api/v1/staff/products/:id` | GET | STAFF, ADMIN | Full product detail including inactive variants and audit metadata. |
+| `/api/v1/staff/products/:id` | PATCH | STAFF, ADMIN | Updates product title, description, category, and collections. |
+| `/api/v1/staff/products/:id` | DELETE | STAFF, ADMIN | Soft-archives product (status set to `ARCHIVED`) and audits event. |
+| `/api/v1/staff/products/:id/publish` | PATCH | STAFF, ADMIN | Validates active variant existence and transitions product to `PUBLISHED`. |
+| `/api/v1/staff/products/:id/variants` | POST | STAFF, ADMIN | Adds SKU variant with size, color, and price (checks unique SKU). |
+| `/api/v1/staff/products/:id/variants` | GET | STAFF, ADMIN | Lists all variants for a product. |
+| `/api/v1/staff/products/:id/variants/:variantId` | PATCH | STAFF, ADMIN | Updates variant details; automatically audits price mutations with before/after diffs. |
+| `/api/v1/staff/products/:id/variants/:variantId` | DELETE | STAFF, ADMIN | Deactivates variant (`isActive: false`) and audits mutation. |
+| `/api/v1/staff/categories` | CRUD | STAFF, ADMIN | Full category lifecycle management (prevents deletion if products linked). |
+| `/api/v1/staff/collections` | CRUD | STAFF, ADMIN | Full collection lifecycle and M:N product mapping management. |
+| `/api/v1/staff/products/:id/size-guide` | CRUD | STAFF, ADMIN | Manages product size guides and measurement range brackets. |
+| `/api/v1/staff/returns` | GET, PATCH | STAFF, ADMIN | Browses return requests and approves/rejects customer return tickets. |
+
+---
+
+## 9. Project Dependencies & Libraries
 
 | Package | Purpose & Operational Function |
 | :--- | :--- |
@@ -119,9 +145,9 @@ Whenever an Administrator creates, updates, or deactivates a staff member in `Us
 
 ---
 
-## 9. Viva Defense & Examination Guide
+## 10. Viva Defense & Examination Guide
 
-### Key Questions & Answers:
+### Administrator (Role D) Q&A:
 1. **Q: What was your individual contribution to the group project?**  
    *A: "I owned the **Admin** domain (Developer D). My deliverables include the shared authentication foundation with bcrypt password hashing and JWT token issuance, RBAC guards with the custom `@Roles()` and `@Actor()` decorators, complete staff account management (`/admin/staff`), the centralized audit log system with before/after diff tracking (`audit_logs` table and `/admin/audit-logs`), and administrative platform analytics."*
 
@@ -133,3 +159,21 @@ Whenever an Administrator creates, updates, or deactivates a staff member in `Us
 
 4. **Q: Why do you store money in integer minor units?**  
    *A: "Standard floating-point numbers in computers suffer from IEEE 754 precision issues (e.g., 0.1 + 0.2 = 0.30000000000000004). Storing money as integer minor units (such as 250,000 for 2,500.00 BDT) guarantees exact arithmetic with zero rounding error."*
+
+---
+
+### Staff & Catalog Developer (Role B — Utso) Q&A:
+1. **Q: What was your individual contribution to the group project?**  
+   *A: "I owned the **Staff** domain (Developer B). My deliverables include full CRUD and lifecycle management for the catalog (`products` and `product_variants`), taxonomy management (`categories` and `collections`), the Many-to-Many bridge table (`product_collections`), size-guide measurement brackets (`size_guides` and `size_guide_ranges`), and customer return ticket review (`return_requests`). I also authored the `@StaffActor()` custom decorator, the `CatalogPriceTransformInterceptor` for response manipulation, and transactional auditing across catalog mutations."*
+
+2. **Q: How did you model the Many-to-Many (M:N) relationship between Products and Collections?**  
+   *A: "In TypeORM, I defined `@ManyToMany(() => Collection)` on `Product` and `@ManyToMany(() => Product)` on `Collection`, mapped through a dedicated bridge table `product_collections` via `@JoinTable`. The table has composite primary keys (`product_id`, `collection_id`) with cascading foreign keys, allowing a product to belong to multiple curated seasonal drops and collections to host multiple products."*
+
+3. **Q: How do you enforce business rules during product publishing?**  
+   *A: "In `CatalogService.publishProduct()`, before transitioning a product status from `DRAFT` to `PUBLISHED`, the service verifies that the product has at least one active variant with a positive price (`priceMinor > 0`). If no valid sellable variants exist, it rejects the request with a `400 Bad Request`. When successful, it records a `PRODUCT_PUBLISHED` audit log."*
+
+4. **Q: What bonus features did you individually implement for the Staff role?**  
+   *A: "I implemented three core bonuses:
+   1. **Response Manipulation / Interceptor**: `CatalogPriceTransformInterceptor` intercepts product endpoints, converts integer minor units (e.g., 250,000) into formatted currency strings ('2,500.00 BDT'), and calculates aggregated `pricingSummary` (`minPrice`, `maxPrice`) and `variantCount` on the fly.
+   2. **Advanced Multi-Table Transactions**: `CatalogService.createProduct()` creates a product, multiple initial SKU variants, and records an audit log atomically inside `this.dataSource.transaction()`. If any variant has a duplicate SKU, everything rolls back.
+   3. **Audit Log Integration & Custom Decorator**: Every variant price update triggers `VARIANT_PRICE_CHANGED` in `audit_logs` capturing before/after price values. Controller endpoints use `@StaffActor()` to cleanly inject authenticated staff metadata."*

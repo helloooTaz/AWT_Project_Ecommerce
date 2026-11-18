@@ -276,9 +276,7 @@ export class InventoryService {
       const balance = await this.lockBalance(manager, variantId);
 
       if (!balance || balance.onHand - balance.reserved < neededQuantity) {
-        throw new ConflictException(
-          'Insufficient stock for one or more items',
-        );
+        throw new ConflictException('Insufficient stock for one or more items');
       }
 
       balance.reserved += neededQuantity;

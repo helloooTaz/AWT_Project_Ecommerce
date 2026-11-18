@@ -4,6 +4,8 @@ import {
   Entity,
   Index,
   JoinColumn,
+  JoinTable,
+  ManyToMany,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
@@ -12,6 +14,7 @@ import {
   type Relation,
 } from 'typeorm';
 import { Category } from '../../categories/entities/category.entity';
+import { Collection } from '../../collections/entities/collection.entity';
 import { ProductVariant } from './product-variant.entity';
 
 export enum ProductStatus {
@@ -56,6 +59,22 @@ export class Product {
 
   @OneToMany(() => ProductVariant, (variant) => variant.product)
   variants!: Relation<ProductVariant[]>;
+
+  @ManyToMany(() => Collection, (collection) => collection.products)
+  @JoinTable({
+    name: 'product_collections',
+    joinColumn: {
+      name: 'product_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'fk_product_collections_product',
+    },
+    inverseJoinColumn: {
+      name: 'collection_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'fk_product_collections_collection',
+    },
+  })
+  collections!: Relation<Collection[]>;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

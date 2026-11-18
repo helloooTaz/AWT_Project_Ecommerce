@@ -253,6 +253,40 @@ log. Reuse the checkout idempotency key to see timing on the replay response.
 | `GET /api/v1/admin/analytics/summary` | ADMIN | System-wide operational and user metrics summary, 200 |
 | `GET /api/v1/users/me` | Any Authenticated | Retrieve current user profile safely, 200 |
 
+## Staff Catalog, Operations & Merchandising (Developer B)
+
+Staff endpoints are guarded by `JwtAuthGuard` and `RolesGuard` requiring `STAFF` or `ADMIN` roles.
+
+### Public Storefront Endpoints
+
+| Method and path | Access | Description |
+| --- | --- | --- |
+| `GET /api/v1/products` | Public | Paginated published catalog with active variants, price formatting, search, and category/collection filters |
+| `GET /api/v1/products/:id` | Public | Published product detail with active variants and category/collections |
+| `GET /api/v1/products/slug/:slug` | Public | Published product detail by SEO slug |
+| `GET /api/v1/categories` | Public | List active categories |
+| `GET /api/v1/collections` | Public | List active curated collections |
+| `GET /api/v1/products/:id/size-guide` | Public | Read product size guide and measurement brackets |
+
+### Staff Management Endpoints
+
+| Method and path | Access | Description |
+| --- | --- | --- |
+| `POST /api/v1/staff/products` | STAFF, ADMIN | Create product in `DRAFT` status with optional initial variants in an atomic transaction |
+| `GET /api/v1/staff/products` | STAFF, ADMIN | Paginated list of all products (`DRAFT`, `PUBLISHED`, `ARCHIVED`) |
+| `GET /api/v1/staff/products/:id` | STAFF, ADMIN | Full product detail with all variants and collections |
+| `PATCH /api/v1/staff/products/:id` | STAFF, ADMIN | Update product information, category, and collections |
+| `PATCH /api/v1/staff/products/:id/publish` | STAFF, ADMIN | Enforce active variants invariant and transition status to `PUBLISHED` |
+| `DELETE /api/v1/staff/products/:id` | STAFF, ADMIN | Soft-archive product (`ARCHIVED` status) with audit log |
+| `POST /api/v1/staff/products/:productId/variants` | STAFF, ADMIN | Add SKU variant with size, color, and price |
+| `PATCH /api/v1/staff/products/:productId/variants/:variantId` | STAFF, ADMIN | Update variant details; price changes are automatically audited |
+| `DELETE /api/v1/staff/products/:productId/variants/:variantId` | STAFF, ADMIN | Deactivate variant |
+| `CRUD /api/v1/staff/categories` | STAFF, ADMIN | Full category lifecycle (protects against deleting categories with linked products) |
+| `CRUD /api/v1/staff/collections` | STAFF, ADMIN | Full collection lifecycle and M:N product mappings |
+| `CRUD /api/v1/staff/products/:productId/size-guide` | STAFF, ADMIN | Manage product size guides and measurement range brackets |
+| `GET /api/v1/staff/returns` | STAFF, ADMIN | Paginated customer return requests |
+| `PATCH /api/v1/staff/returns/:id/review` | STAFF, ADMIN | Approve or reject return ticket with staff notes and audit trail |
+
 ## Verification
 
 ```sh

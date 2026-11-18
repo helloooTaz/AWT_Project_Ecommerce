@@ -14,7 +14,9 @@ async function runSqlSeed() {
     console.log(`[SeedSQL] Applying schema DDL from ${schemaPath}...`);
     const schemaSql = readFileSync(schemaPath, 'utf-8');
     await dataSource.query(schemaSql);
-    console.log(`[SeedSQL] Schema tables, constraints, and triggers applied successfully.`);
+    console.log(
+      `[SeedSQL] Schema tables, constraints, and triggers applied successfully.`,
+    );
 
     const seedPath = join(__dirname, '..', 'seed.sql');
     console.log(`[SeedSQL] Reading SQL seed file from ${seedPath}...`);
@@ -22,7 +24,9 @@ async function runSqlSeed() {
 
     console.log(`[SeedSQL] Executing seed SQL statements...`);
     await dataSource.query(seedSql);
-    console.log(`[SeedSQL] Database successfully reset and seeded with canonical demo fixtures!`);
+    console.log(
+      `[SeedSQL] Database successfully reset and seeded with canonical demo fixtures!`,
+    );
   } catch (error) {
     console.error(`[SeedSQL] Failed to execute seed SQL:`, error);
     process.exit(1);

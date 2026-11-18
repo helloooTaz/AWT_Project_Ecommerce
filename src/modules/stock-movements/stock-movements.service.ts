@@ -22,9 +22,7 @@ export class StockMovementsService {
     private readonly movementRepo: Repository<StockMovementEntity>,
   ) {}
 
-  async listMovements(
-    query: StockMovementQueryDto,
-  ): Promise<{
+  async listMovements(query: StockMovementQueryDto): Promise<{
     items: StockMovementEntity[];
     pagination: {
       page: number;
