@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: thread-commerce-api
+    runtime: node
+    plan: free
+    region: singapore
+    branch: Junayed
+    buildCommand: npm ci && npm run build
+    startCommand: npm run db:migrate:prod && npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: thread-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SWAGGER_ENABLED
+        value: "true"
+      - key: PAYMENT_PROVIDER
+        value: "DISABLED"
+      - key: MAIL_ENABLED
+        value: "false"
+
+databases:
+  - name: thread-postgres
+    plan: free
+    region: singapore
+    databaseName: thread
+    user: thread_user
