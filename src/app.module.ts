@@ -1,61 +1,39 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { RequestLoggingMiddleware } from './common/middleware/request-logging.middleware';
-import { validateEnvironment, type Environment } from './config/env.validation';
-import { databaseOptions } from './database/database.options';
+import { type AppEnvironment, validateAppEnvironment } from './config/environment';
+import { databaseOptions } from './database/database-options';
 import { HealthController } from './health.controller';
-import { AccountsModule } from './modules/accounts/accounts.module';
-import { AddressesModule } from './modules/addresses/addresses.module';
-import { AnalyticsModule } from './modules/analytics/analytics.module';
-import { AuditModule } from './modules/audit/audit.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { JwtAuthGuard, RolesGuard } from './modules/auth/auth.guards';
 import { AuthModule } from './modules/auth/auth.module';
-import { CartModule } from './modules/cart/cart.module';
-import { CatalogModule } from './modules/catalog/catalog.module';
-import { CategoriesModule } from './modules/categories/categories.module';
-import { CheckoutModule } from './modules/checkout/checkout.module';
-import { CollectionsModule } from './modules/collections/collections.module';
-import { FulfillmentModule } from './modules/fulfillment/fulfillment.module';
-import { InventoryModule } from './modules/inventory/inventory.module';
-import { OrdersModule } from './modules/orders/orders.module';
-import { PaymentsModule } from './modules/payments/payments.module';
-import { ReturnsModule } from './modules/returns/returns.module';
-import { ShipmentsModule } from './modules/shipments/shipments.module';
-import { SizeGuidesModule } from './modules/size-guides/size-guides.module';
-import { SizeRecommendationModule } from './modules/size-recommendations/size-recommendation.module';
-import { StockMovementsModule } from './modules/stock-movements/stock-movements.module';
-import { UsersModule } from './modules/users/users.module';
+import { CustomerModule } from './modules/customer/customer.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
+    ConfigModule.forRoot({ isGlobal: true, cache: true, validate: validateAppEnvironment }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService<Environment, true>) =>
-        databaseOptions(config.get('DATABASE_URL', { infer: true })),
+      useFactory: (config: ConfigService<AppEnvironment, true>) => ({
+        ...databaseOptions({
+          DB_HOST: config.getOrThrow('DB_HOST', { infer: true }),
+          DB_PORT: config.getOrThrow('DB_PORT', { infer: true }),
+          DB_NAME: config.getOrThrow('DB_NAME', { infer: true }),
+          DB_USER: config.getOrThrow('DB_USER', { infer: true }),
+          DB_PASSWORD: config.getOrThrow('DB_PASSWORD', { infer: true }),
+        }),
+        retryAttempts: 1,
+      }),
     }),
     AuthModule,
-    UsersModule,
-    AuditModule,
-    AnalyticsModule,
-    AccountsModule,
-    AddressesModule,
-    CartModule,
-    CatalogModule,
-    CategoriesModule,
-    CollectionsModule,
-    OrdersModule,
-    CheckoutModule,
-    PaymentsModule,
-    SizeGuidesModule,
-    SizeRecommendationModule,
-    ReturnsModule,
-    InventoryModule,
-    StockMovementsModule,
-    FulfillmentModule,
-    ShipmentsModule,
+    CustomerModule,
+    AdminModule,
   ],
   controllers: [HealthController],
-  providers: [RequestLoggingMiddleware],
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+  ],
 })
 export class AppModule {}

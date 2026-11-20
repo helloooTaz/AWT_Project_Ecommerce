@@ -1,23 +1,20 @@
 import { Controller, Get } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { successResponse } from './common/dto/success-response';
+import { ApiProperty, ApiTags } from '@nestjs/swagger';
+import { ApiDataResponse } from './common/http/openapi';
+import { Public } from './modules/auth/auth.decorators';
+
+class HealthResponse {
+  @ApiProperty({ example: 'ok' })
+  status!: string;
+}
 
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
+  @Public()
   @Get()
-  @ApiOperation({ summary: 'Check whether the API is running' })
-  @ApiOkResponse({
-    schema: {
-      example: {
-        success: true,
-        message: 'OK',
-        data: { status: 'ok' },
-        meta: { requestId: 'c84ebc91-bf19-42fd-9a0d-41c79cd7a961' },
-      },
-    },
-  })
-  check() {
-    return successResponse({ status: 'ok' });
+  @ApiDataResponse(HealthResponse)
+  health(): HealthResponse {
+    return { status: 'ok' };
   }
 }

@@ -1,441 +1,140 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, type EntityManager, Repository } from 'typeorm';
+import { Page } from '../../common/http/pagination';
+import { InventoryMovement, InventoryStock, ProductVariant } from '../../database/entities';
+import { MovementType } from '../../database/entities/inventory.entity';
 import {
-  DataSource,
-  EntityManager,
-  FindOptionsWhere,
-  In,
-  Repository,
-} from 'typeorm';
-import { StockMovementType } from '../../common/enums/stock-movement-type.enum';
-import { CatalogService } from '../catalog/catalog.service';
-import { OrderItemEntity } from '../orders/entities/order-item.entity';
-import { StockMovementsService } from '../stock-movements/stock-movements.service';
-import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
-import { CreateReceiptDto } from './dto/create-receipt.dto';
-import { InventoryQueryDto } from './dto/inventory-query.dto';
-import { InventoryBalanceEntity } from './entities/inventory-balance.entity';
-import {
-  StockReservation,
-  StockReservationEntity,
-  StockReservationStatus,
-} from './entities/stock-reservation.entity';
-
-export interface StockReservationItem {
-  orderItemId: string;
-  variantId: string;
-  quantity: number;
-}
+  MAX_STOCK, type AdjustStockDto, type InventoryPageQueryDto, type MovementResponseDto,
+  type ReceiveStockDto, type StockChangeResponseDto, type StockResponseDto,
+} from './inventory.dto';
 
 @Injectable()
 export class InventoryService {
-  private readonly logger = new Logger(InventoryService.name);
-
   constructor(
-    @InjectRepository(InventoryBalanceEntity)
-    private readonly balanceRepo: Repository<InventoryBalanceEntity>,
-    private readonly stockMovementsService: StockMovementsService,
-    private readonly catalogService: CatalogService,
     private readonly dataSource: DataSource,
+    @InjectRepository(ProductVariant) private readonly variants: Repository<ProductVariant>,
+    @InjectRepository(InventoryMovement) private readonly movements: Repository<InventoryMovement>,
   ) {}
 
-  private async lockBalance(
+  async listStock(query: InventoryPageQueryDto): Promise<Page<StockResponseDto>> {
+    const stock = this.stockQuery(query.variantId);
+    const total = await stock.getCount();
+    const items = await stock.orderBy('variant.sku', 'ASC').addOrderBy('variant.id', 'ASC')
+      .offset((query.page - 1) * query.limit).limit(query.limit).getRawMany<StockResponseDto>();
+    return new Page(items, total, query);
+  }
+
+  async getStock(variantId: string): Promise<StockResponseDto> {
+    const stock = await this.stockQuery(variantId).getRawOne<StockResponseDto>();
+    if (!stock) throw new NotFoundException('Variant not found');
+    return stock;
+  }
+
+  receive(input: ReceiveStockDto, actorId: string): Promise<StockChangeResponseDto> {
+    return this.changeStock(input.variantId, input.quantity, input.reason, actorId, MovementType.Receipt);
+  }
+
+  adjust(input: AdjustStockDto, actorId: string): Promise<StockChangeResponseDto> {
+    return this.changeStock(input.variantId, input.delta, input.reason, actorId, MovementType.Adjustment);
+  }
+
+  async listMovements(query: InventoryPageQueryDto): Promise<Page<MovementResponseDto>> {
+    const [items, total] = await this.movements.findAndCount({
+      where: query.variantId ? { variantId: query.variantId } : {},
+      select: { id: true, variantId: true, actorId: true, type: true, delta: true, reason: true, createdAt: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    });
+    return new Page(items, total, query);
+  }
+
+  private stockQuery(variantId?: string) {
+    const query = this.variants.createQueryBuilder('variant')
+      .innerJoin('variant.product', 'product')
+      .leftJoin(InventoryStock, 'stock', 'stock.variantId = variant.id')
+      .select('variant.id', 'variantId')
+      .addSelect('product.id', 'productId')
+      .addSelect('variant.sku', 'sku')
+      .addSelect('product.name', 'productName')
+      .addSelect('variant.size', 'size')
+      .addSelect('variant.color', 'color')
+      .addSelect('COALESCE(stock.quantity, 0)', 'quantity');
+    if (variantId) query.where('variant.id = :variantId', { variantId });
+    return query;
+  }
+
+  private changeStock(
+    variantId: string, delta: number, reason: string, actorId: string,
+    type: MovementType.Receipt | MovementType.Adjustment,
+  ): Promise<StockChangeResponseDto> {
+    return this.dataSource.transaction(async (manager) => {
+      if (!await manager.getRepository(ProductVariant).existsBy({ id: variantId })) {
+        throw new NotFoundException('Variant not found');
+      }
+      const stock = manager.getRepository(InventoryStock);
+      if (delta > 0) {
+        // The unique variant ID lets concurrent increases share one balance row.
+        await stock.createQueryBuilder().insert().values({ variantId, quantity: 0 })
+          .onConflict('("variantId") DO NOTHING').execute();
+      }
+
+      // PostgreSQL locks the updated row and rechecks the bounds after a competing write.
+      const updated = await stock.createQueryBuilder().update()
+        .set({ quantity: () => '"quantity" + :delta' })
+        .where('"variantId" = :variantId AND "quantity" + CAST(:delta AS bigint) BETWEEN 0 AND :maximum', {
+          variantId, delta, maximum: MAX_STOCK,
+        })
+        .returning(['variantId', 'quantity'])
+        .execute();
+      const [balance]: Array<{ variantId: string; quantity: number }> = updated.raw;
+      if (!balance) {
+        throw new ConflictException(delta < 0 ? 'Adjustment would make stock negative' : 'Stock limit exceeded');
+      }
+
+      const movements = manager.getRepository(InventoryMovement);
+      const saved = await movements.save(movements.create({
+        variantId: balance.variantId, actorId, type, delta, reason,
+      }));
+      const movement = { id: saved.id, variantId: saved.variantId, actorId, type, delta, reason, createdAt: saved.createdAt };
+      return { ...balance, movement };
+    });
+  }
+
+  /**
+   * Call within checkout's transaction and visit variants in ascending ID order.
+   * The update and movement are committed or rolled back by the caller.
+   */
+  async deductStock(
     manager: EntityManager,
     variantId: string,
-  ): Promise<InventoryBalanceEntity | null> {
-    return manager
-      .getRepository(InventoryBalanceEntity)
-      .createQueryBuilder('ib')
-      .setLock('pessimistic_write')
-      .where('ib.variantId = :variantId', { variantId })
-      .getOne();
-  }
-
-  async getAvailability(variantIds: string[]): Promise<Map<string, number>> {
-    if (!variantIds || variantIds.length === 0) {
-      return new Map();
-    }
-
-    const balances = await this.balanceRepo.findBy({
-      variantId: In(variantIds),
-    });
-
-    const availability = new Map(variantIds.map((id) => [id, 0]));
-    for (const balance of balances) {
-      availability.set(balance.variantId, balance.onHand - balance.reserved);
-    }
-
-    return availability;
-  }
-
-  async getOverview(query: InventoryQueryDto) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
-
-    const where: FindOptionsWhere<InventoryBalanceEntity> = {};
-    if (query.variantId) {
-      where.variantId = query.variantId;
-    }
-
-    const [items, total] = await this.balanceRepo.findAndCount({
-      where,
-      order: { variantId: 'ASC' },
-      skip,
-      take: limit,
-    });
-
-    return {
-      items,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit) || 1,
-      },
-    };
-  }
-
-  async getByVariantId(variantId: string): Promise<InventoryBalanceEntity> {
-    const balance = await this.balanceRepo.findOne({ where: { variantId } });
-    if (!balance) {
-      throw new NotFoundException(
-        `Inventory balance for variant ${variantId} was not found`,
-      );
-    }
-    return balance;
-  }
-
-  async receiveStock(
-    actorId: string | null,
-    dto: CreateReceiptDto,
-  ): Promise<InventoryBalanceEntity> {
-    await this.catalogService.validateVariantExists(dto.variantId);
-
-    return this.dataSource.transaction(async (manager) => {
-      const balanceRepo = manager.getRepository(InventoryBalanceEntity);
-      let balance = await this.lockBalance(manager, dto.variantId);
-
-      if (!balance) {
-        balance = balanceRepo.create({
-          variantId: dto.variantId,
-          onHand: dto.quantity,
-          reserved: 0,
-        });
-      } else {
-        balance.onHand += dto.quantity;
-      }
-
-      const saved = await balanceRepo.save(balance);
-
-      await this.stockMovementsService.recordMovement(manager, {
-        variantId: dto.variantId,
-        actorId,
-        type: StockMovementType.RECEIPT,
-        quantity: dto.quantity,
-        reason: dto.reason || 'STOCK_RECEIPT',
-      });
-
-      this.logger.log(
-        `Received ${dto.quantity} units for variant ${dto.variantId}. New onHand=${saved.onHand}`,
-      );
-      return saved;
-    });
-  }
-
-  async adjustStock(
-    actorId: string | null,
-    dto: CreateAdjustmentDto,
-  ): Promise<InventoryBalanceEntity> {
-    await this.catalogService.validateVariantExists(dto.variantId);
-
-    return this.dataSource.transaction(async (manager) => {
-      const balanceRepo = manager.getRepository(InventoryBalanceEntity);
-      const balance = await this.lockBalance(manager, dto.variantId);
-
-      if (!balance) {
-        throw new NotFoundException(
-          `Inventory balance for variant ${dto.variantId} was not found`,
-        );
-      }
-
-      const targetOnHand = balance.onHand + dto.delta;
-      if (targetOnHand < 0) {
-        throw new ConflictException(
-          `Adjustment conflict: resulting onHand (${targetOnHand}) cannot be negative`,
-        );
-      }
-      if (targetOnHand < balance.reserved) {
-        throw new ConflictException(
-          `Adjustment conflict: resulting onHand (${targetOnHand}) cannot be less than currently reserved units (${balance.reserved})`,
-        );
-      }
-
-      balance.onHand = targetOnHand;
-      const saved = await balanceRepo.save(balance);
-
-      await this.stockMovementsService.recordMovement(manager, {
-        variantId: dto.variantId,
-        actorId,
-        type: StockMovementType.ADJUSTMENT,
-        quantity: dto.delta,
-        reason: dto.reason,
-      });
-
-      this.logger.log(
-        `Adjusted stock for variant ${dto.variantId} by ${dto.delta}. New onHand=${saved.onHand}`,
-      );
-      return saved;
-    });
-  }
-
-  async reserveForOrder(
-    manager: EntityManager,
-    items: readonly StockReservationItem[],
-    expiresAt: Date,
-  ): Promise<StockReservation[]> {
-    if (
-      manager.queryRunner !== undefined &&
-      !manager.queryRunner.isTransactionActive
-    ) {
-      throw new Error('Stock reservation requires an active transaction');
-    }
-
-    if (!items || items.length === 0) {
-      return [];
-    }
-
-    if (!expiresAt || !Number.isFinite(expiresAt.getTime())) {
-      throw new BadRequestException('Reservation expiration is invalid');
-    }
-
-    const lines = items.map((item) => {
-      if (item.quantity <= 0) {
-        throw new ConflictException(
-          `Reservation quantity must be greater than 0, got ${item.quantity}`,
-        );
-      }
-      return {
-        orderItemId: item.orderItemId.toLowerCase(),
-        variantId: item.variantId.toLowerCase(),
-        quantity: item.quantity,
-      };
-    });
-
-    const orderItemIds = lines.map((line) => line.orderItemId);
-    if (new Set(orderItemIds).size !== lines.length) {
-      throw new ConflictException('Order item already has a reservation');
-    }
-
-    const persistedItems = await manager.getRepository(OrderItemEntity).find({
-      where: { id: In(orderItemIds) },
-    });
-
-    const persistedById = new Map(
-      persistedItems.map((item) => [item.id.toLowerCase(), item]),
-    );
-
-    for (const line of lines) {
-      const persisted = persistedById.get(line.orderItemId);
-      if (
-        !persisted ||
-        persisted.variantId?.toLowerCase() !== line.variantId ||
-        persisted.quantity !== line.quantity
-      ) {
-        throw new BadRequestException('Reservation must match its order item');
-      }
-    }
-
-    const reservationRepo = manager.getRepository(StockReservationEntity);
-    const existing = await reservationRepo.find({
-      where: { orderItemId: In(orderItemIds) },
-    });
-    if (existing.length > 0) {
-      throw new ConflictException('Order item already has a reservation');
-    }
-
-    const quantityByVariant = new Map<string, number>();
-    for (const line of lines) {
-      const current = quantityByVariant.get(line.variantId) ?? 0;
-      quantityByVariant.set(line.variantId, current + line.quantity);
-    }
-
-    const sortedVariantIds = Array.from(quantityByVariant.keys()).sort((a, b) =>
-      a.localeCompare(b),
-    );
-
-    const balanceRepo = manager.getRepository(InventoryBalanceEntity);
-    for (const variantId of sortedVariantIds) {
-      const neededQuantity = quantityByVariant.get(variantId)!;
-      const balance = await this.lockBalance(manager, variantId);
-
-      if (!balance || balance.onHand - balance.reserved < neededQuantity) {
-        throw new ConflictException('Insufficient stock for one or more items');
-      }
-
-      balance.reserved += neededQuantity;
-      await balanceRepo.save(balance);
-    }
-
-    const createdReservations: StockReservationEntity[] = [];
-    for (const line of lines) {
-      const reservation = reservationRepo.create({
-        orderItemId: line.orderItemId,
-        variantId: line.variantId,
-        quantity: line.quantity,
-        status: StockReservationStatus.ACTIVE,
-        expiresAt,
-      });
-      createdReservations.push(await reservationRepo.save(reservation));
-    }
-
-    return createdReservations;
-  }
-
-  async releaseForOrder(
-    manager: EntityManager,
+    quantity: number,
+    actorId: string,
     orderId: string,
-    reason?: string,
   ): Promise<void> {
-    if ('connection' in manager && !manager.queryRunner?.isTransactionActive) {
-      throw new Error(
-        'Stock reservation release requires an active transaction',
-      );
+    if (!manager.queryRunner?.isTransactionActive) {
+      throw new Error('Stock deduction requires an active transaction');
+    }
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2_147_483_647) {
+      throw new BadRequestException('Stock deduction quantity must be a positive integer');
     }
 
-    const reservationRepo = manager.getRepository(StockReservationEntity);
-    const reservations = await reservationRepo
-      .createQueryBuilder('res')
-      .setLock('pessimistic_write')
-      .innerJoin(OrderItemEntity, 'oi', 'oi.id = res.orderItemId')
-      .where('oi.orderId = :orderId AND res.status = :status', {
-        orderId,
-        status: StockReservationStatus.ACTIVE,
-      })
-      .orderBy('res.variantId', 'ASC')
-      .addOrderBy('res.orderItemId', 'ASC')
-      .getMany();
+    const update = await manager.getRepository(InventoryStock).createQueryBuilder()
+      .update()
+      .set({ quantity: () => '"quantity" - :quantity' })
+      .where('"variantId" = :variantId AND "quantity" >= :quantity', { variantId, quantity })
+      .execute();
 
-    if (reservations.length === 0) {
-      return;
+    if (update.affected !== 1) {
+      throw new ConflictException('Insufficient stock');
     }
-
-    const quantitiesByVariant = new Map<string, number>();
-    for (const res of reservations) {
-      const current = quantitiesByVariant.get(res.variantId) ?? 0;
-      quantitiesByVariant.set(res.variantId, current + res.quantity);
-    }
-
-    const sortedVariantIds = Array.from(quantitiesByVariant.keys()).sort(
-      (a, b) => a.localeCompare(b),
-    );
-
-    const balanceRepo = manager.getRepository(InventoryBalanceEntity);
-    for (const variantId of sortedVariantIds) {
-      const quantityToRelease = quantitiesByVariant.get(variantId)!;
-      const balance = await this.lockBalance(manager, variantId);
-
-      if (!balance || balance.reserved < quantityToRelease) {
-        throw new ConflictException('Reserved stock could not be released');
-      }
-
-      balance.reserved -= quantityToRelease;
-      await balanceRepo.save(balance);
-
-      await this.stockMovementsService.recordMovement(manager, {
-        variantId,
-        type: StockMovementType.RESERVATION_RELEASED,
-        quantity: quantityToRelease,
-        reason: reason || `Reservation released for order ${orderId}`,
-      });
-    }
-
-    for (const res of reservations) {
-      res.status = StockReservationStatus.RELEASED;
-      await reservationRepo.save(res);
-    }
-  }
-
-  async consumeForShipment(
-    manager: EntityManager,
-    orderId: string,
-    actorId?: string,
-  ): Promise<void> {
-    const orderItems = await manager
-      .getRepository(OrderItemEntity)
-      .find({ where: { orderId } });
-
-    if (orderItems.length === 0) {
-      throw new ConflictException(`Order ${orderId} has no line items to ship`);
-    }
-
-    const reservationRepo = manager.getRepository(StockReservationEntity);
-    const activeReservations = await reservationRepo
-      .createQueryBuilder('res')
-      .setLock('pessimistic_write')
-      .innerJoin(OrderItemEntity, 'oi', 'oi.id = res.orderItemId')
-      .where('oi.orderId = :orderId AND res.status = :status', {
-        orderId,
-        status: StockReservationStatus.ACTIVE,
-      })
-      .orderBy('res.variantId', 'ASC')
-      .addOrderBy('res.orderItemId', 'ASC')
-      .getMany();
-
-    const reservationByItemId = new Map(
-      activeReservations.map((r) => [r.orderItemId, r]),
-    );
-    const hasMismatch =
-      activeReservations.length !== orderItems.length ||
-      orderItems.some((item) => {
-        const res = reservationByItemId.get(item.id);
-        return (
-          !res ||
-          res.variantId !== item.variantId ||
-          res.quantity !== item.quantity
-        );
-      });
-
-    if (hasMismatch) {
-      throw new ConflictException(
-        `Integrity failure: active reservations do not match line items for order ${orderId}`,
-      );
-    }
-
-    const balanceRepo = manager.getRepository(InventoryBalanceEntity);
-    for (const res of activeReservations) {
-      const balance = await this.lockBalance(manager, res.variantId);
-
-      if (
-        !balance ||
-        balance.reserved < res.quantity ||
-        balance.onHand < res.quantity
-      ) {
-        throw new ConflictException(
-          `Cannot consume stock for variant ${res.variantId}`,
-        );
-      }
-
-      balance.onHand -= res.quantity;
-      balance.reserved -= res.quantity;
-      await balanceRepo.save(balance);
-
-      res.status = StockReservationStatus.CONSUMED;
-      await reservationRepo.save(res);
-
-      await this.stockMovementsService.recordMovement(manager, {
-        variantId: res.variantId,
-        actorId,
-        type: StockMovementType.RESERVATION_CONSUMED,
-        quantity: -res.quantity,
-        reason: `Fulfillment shipment dispatch for order ${orderId}`,
-      });
-    }
+    await manager.insert(InventoryMovement, {
+      variantId,
+      actorId,
+      type: MovementType.Sale,
+      delta: -quantity,
+      reason: `Order ${orderId}`,
+    });
   }
 }

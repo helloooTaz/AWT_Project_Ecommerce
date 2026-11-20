@@ -1,36 +1,42 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import {
-  ApiConflictResponse,
-  ApiCreatedResponse,
-  ApiOkResponse,
-  ApiTags,
-  ApiUnauthorizedResponse,
+  ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiTags, ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { successResponse } from '../../common/dto/success-response';
+import { ApiDataResponse } from '../../common/http/openapi';
+import { CurrentUser, Public } from './auth.decorators';
+import { AuthResponseDto, LoginDto, RegisterDto, UserResponseDto } from './auth.dto';
 import { AuthService } from './auth.service';
-import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/register.dto';
+import type { AuthenticatedUser } from './role';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  @Public()
   @Post('register')
-  @ApiCreatedResponse({ description: 'Customer registered' })
+  @ApiDataResponse(AuthResponseDto, 201)
+  @ApiBadRequestResponse({ description: 'Invalid input' })
   @ApiConflictResponse({ description: 'Email already registered' })
-  async register(@Body() input: RegisterDto) {
-    return successResponse(
-      await this.auth.register(input),
-      'Customer registered',
-    );
+  register(@Body() input: RegisterDto): Promise<AuthResponseDto> {
+    return this.auth.register(input);
   }
 
+  @Public()
   @Post('login')
-  @HttpCode(HttpStatus.OK)
-  @ApiOkResponse({ description: 'Bearer access token in data.accessToken' })
-  @ApiUnauthorizedResponse({ description: 'Invalid email or password' })
-  async login(@Body() input: LoginDto) {
-    return successResponse(await this.auth.login(input));
+  @HttpCode(200)
+  @ApiDataResponse(AuthResponseDto)
+  @ApiBadRequestResponse({ description: 'Invalid input' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
+  login(@Body() input: LoginDto): Promise<AuthResponseDto> {
+    return this.auth.login(input);
+  }
+
+  @Get('me')
+  @ApiBearerAuth()
+  @ApiDataResponse(UserResponseDto)
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, or expired bearer token' })
+  me(@CurrentUser() user: AuthenticatedUser): AuthenticatedUser {
+    return user;
   }
 }

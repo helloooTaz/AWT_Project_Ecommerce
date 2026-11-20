@@ -1,121 +1,78 @@
+import { Body, Controller, Get, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Param,
-  ParseUUIDPipe,
-  Post,
-  Query,
-  UseGuards,
-  UseInterceptors,
-} from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
+  ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiForbiddenResponse, ApiNotFoundResponse,
+  ApiOperation, ApiParam, ApiTags, ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { InventoryService } from './inventory.service';
-import { StockMovementsService } from '../stock-movements/stock-movements.service';
-import { CreateReceiptDto } from './dto/create-receipt.dto';
-import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
-import { InventoryQueryDto } from './dto/inventory-query.dto';
-import { StockMovementQueryDto } from '../stock-movements/dto/stock-movement-query.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { Role } from '../../common/enums/role.enum';
+import { ApiDataResponse, ApiPageResponse } from '../../common/http/openapi';
+import type { Page } from '../../common/http/pagination';
+import { CurrentUser, Roles } from '../auth/auth.decorators';
+import { Role, type AuthenticatedUser } from '../auth/role';
 import {
-  InventoryActor,
-  InventoryActorContext,
-} from '../../common/decorators/inventory-actor.decorator';
-import { StockProjectionInterceptor } from '../../common/interceptors/stock-projection.interceptor';
+  AdjustStockDto, InventoryPageQueryDto, MovementResponseDto, ReceiveStockDto, StockChangeResponseDto,
+  StockResponseDto,
+} from './inventory.dto';
+import { InventoryService } from './inventory.service';
 
 @ApiTags('Inventory')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.INVENTORY_MANAGER, Role.ADMIN)
+@ApiUnauthorizedResponse({ description: 'Missing, invalid, or expired bearer token' })
+@ApiForbiddenResponse({ description: 'Inventory Manager or Admin role required' })
+@Roles(Role.InventoryManager, Role.Admin)
 @Controller('inventory')
 export class InventoryController {
-  constructor(
-    private readonly inventoryService: InventoryService,
-    private readonly stockMovementsService: StockMovementsService,
-  ) {}
+  constructor(private readonly inventory: InventoryService) {}
 
-  @Get()
-  @UseInterceptors(StockProjectionInterceptor)
-  @ApiOperation({
-    summary: 'Paginated stock overview with availability projection',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Paginated inventory balance records',
-  })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden (requires INVENTORY_MANAGER or ADMIN)',
-  })
-  async getOverview(@Query() query: InventoryQueryDto) {
-    return this.inventoryService.getOverview(query);
+  @Get('stock')
+  @ApiOperation({ summary: 'List current stock for catalog variants' })
+  @ApiPageResponse(StockResponseDto)
+  @ApiBadRequestResponse({ description: 'Invalid pagination or variant filter' })
+  listStock(@Query() query: InventoryPageQueryDto): Promise<Page<StockResponseDto>> {
+    return this.inventory.listStock(query);
   }
 
-  @Get('movements')
-  @ApiOperation({ summary: 'Paginated stock movement audit trail' })
-  @ApiResponse({
-    status: 200,
-    description: 'List of historical stock movements',
-  })
-  async getMovements(@Query() query: StockMovementQueryDto) {
-    return this.stockMovementsService.listMovements(query);
-  }
-
-  @Get(':variantId')
-  @UseInterceptors(StockProjectionInterceptor)
-  @ApiOperation({ summary: 'Get stock balance for a specific variant' })
-  @ApiResponse({ status: 200, description: 'Inventory balance record' })
-  @ApiResponse({ status: 404, description: 'Variant balance not found' })
-  async getByVariantId(@Param('variantId', ParseUUIDPipe) variantId: string) {
-    return this.inventoryService.getByVariantId(variantId);
+  @Get('stock/:variantId')
+  @ApiOperation({ summary: 'Get stock and product information for a variant' })
+  @ApiParam({ name: 'variantId', schema: { type: 'string', format: 'uuid' } })
+  @ApiDataResponse(StockResponseDto)
+  @ApiBadRequestResponse({ description: 'Variant ID must be a version 4 UUID' })
+  @ApiNotFoundResponse({ description: 'Variant not found' })
+  getStock(
+    @Param('variantId', new ParseUUIDPipe({ version: '4' })) variantId: string,
+  ): Promise<StockResponseDto> {
+    return this.inventory.getStock(variantId);
   }
 
   @Post('receipts')
-  @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(StockProjectionInterceptor)
-  @ApiOperation({ summary: 'Receive stock shipment for a SKU variant' })
-  @ApiResponse({
-    status: 201,
-    description: 'Stock received and movement recorded',
-  })
-  @ApiResponse({ status: 400, description: 'Validation failed' })
-  @ApiResponse({ status: 404, description: 'Variant does not exist' })
-  async receiveStock(
-    @InventoryActor() actor: InventoryActorContext | undefined,
-    @Body() dto: CreateReceiptDto,
-  ) {
-    return this.inventoryService.receiveStock(actor?.id ?? null, dto);
+  @ApiOperation({ summary: 'Receive stock and record a receipt movement' })
+  @ApiDataResponse(StockChangeResponseDto, HttpStatus.CREATED)
+  @ApiBadRequestResponse({ description: 'Invalid variant ID, quantity, or reason' })
+  @ApiNotFoundResponse({ description: 'Variant not found' })
+  @ApiConflictResponse({ description: 'Resulting quantity would exceed the stock limit' })
+  receive(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Body() input: ReceiveStockDto,
+  ): Promise<StockChangeResponseDto> {
+    return this.inventory.receive(input, actor.id);
   }
 
   @Post('adjustments')
-  @HttpCode(HttpStatus.OK)
-  @UseInterceptors(StockProjectionInterceptor)
-  @ApiOperation({ summary: 'Adjust stock count with operational reason' })
-  @ApiResponse({
-    status: 200,
-    description: 'Stock adjusted and movement recorded',
-  })
-  @ApiResponse({ status: 400, description: 'Validation failed' })
-  @ApiResponse({ status: 404, description: 'Variant or balance not found' })
-  @ApiResponse({
-    status: 409,
-    description: 'Adjustment conflict (insufficient available stock)',
-  })
-  async adjustStock(
-    @InventoryActor() actor: InventoryActorContext | undefined,
-    @Body() dto: CreateAdjustmentDto,
-  ) {
-    return this.inventoryService.adjustStock(actor?.id ?? null, dto);
+  @ApiOperation({ summary: 'Adjust stock and record an adjustment movement' })
+  @ApiDataResponse(StockChangeResponseDto, HttpStatus.CREATED)
+  @ApiBadRequestResponse({ description: 'Invalid variant ID, delta, or reason' })
+  @ApiNotFoundResponse({ description: 'Variant not found' })
+  @ApiConflictResponse({ description: 'Resulting quantity would be negative or exceed the stock limit' })
+  adjust(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Body() input: AdjustStockDto,
+  ): Promise<StockChangeResponseDto> {
+    return this.inventory.adjust(input, actor.id);
+  }
+
+  @Get('movements')
+  @ApiOperation({ summary: 'List stock movements, newest first' })
+  @ApiPageResponse(MovementResponseDto)
+  @ApiBadRequestResponse({ description: 'Invalid pagination or variant filter' })
+  listMovements(@Query() query: InventoryPageQueryDto): Promise<Page<MovementResponseDto>> {
+    return this.inventory.listMovements(query);
   }
 }

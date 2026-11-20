@@ -1,16 +1,23 @@
+import 'reflect-metadata';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { configureApp } from './app.setup';
-import type { Environment } from './config/env.validation';
+import type { AppEnvironment } from './config/environment';
+import { configureApp } from './configure-app';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { rawBody: true });
-  const config = app.get<ConfigService<Environment, true>>(ConfigService);
-
-  configureApp(app, config.get('SWAGGER_ENABLED', { infer: true }));
+  const app = await NestFactory.create(AppModule, { abortOnError: false });
+  configureApp(app);
   app.enableShutdownHooks();
-  await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');
+
+  const config = app.get<ConfigService<AppEnvironment, true>>(ConfigService);
+  await app.listen(
+    config.getOrThrow('PORT', { infer: true }),
+    config.getOrThrow('HOST', { infer: true }),
+  );
 }
 
-void bootstrap();
+void bootstrap().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : 'Minimal THREAD failed to start.');
+  process.exitCode = 1;
+});
