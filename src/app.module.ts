@@ -9,6 +9,8 @@ import { AdminModule } from './modules/admin/admin.module';
 import { JwtAuthGuard, RolesGuard } from './modules/auth/auth.guards';
 import { AuthModule } from './modules/auth/auth.module';
 import { CustomerModule } from './modules/customer/customer.module';
+import { FulfillmentModule } from './modules/fulfillment/fulfillment.module';
+import { ShipmentsModule } from './modules/shipments/shipments.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { CustomerModule } from './modules/customer/customer.module';
     AuthModule,
     CustomerModule,
     AdminModule,
+    FulfillmentModule,
+    ShipmentsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -21,7 +21,7 @@ const { AppModule } = require('../dist/app.module');
 const { configureApp } = require('../dist/configure-app');
 const {
   Address, Cart, CartItem, Category, Collection, InventoryMovement, InventoryStock,
-  Order, OrderItem, Product, ProductVariant, User,
+  Order, OrderItem, OrderStatus, Product, ProductVariant, Shipment, ShipmentStatus, User,
 } = require('../dist/database/entities');
 const { MovementType } = require('../dist/database/entities/inventory.entity');
 const { CatalogService } = require('../dist/modules/staff/catalog.service');
@@ -2025,7 +2025,109 @@ test('seeded Admin, Staff, Inventory Manager, and Customer complete one purchase
   assertError(await request(orderPath, { token: stranger }), 404);
 });
 
-test('OpenAPI exposes all 50 registered application operations', async () => {
+test('Fulfillment and Shipments Swagger describe all operations, request bodies, and schemas', async () => {
+  const { response, body: doc } = await request('/docs-json');
+  assert.equal(response.status, 200);
+  for (const [path, method, success, tag] of [
+    ['/api/fulfillment/orders', 'get', 200, 'Fulfillment'],
+    ['/api/fulfillment/orders/{id}/pack', 'patch', 200, 'Fulfillment'],
+    ['/api/fulfillment/orders/{id}/shipments', 'post', 201, 'Fulfillment'],
+    ['/api/shipments/order/{orderId}', 'get', 200, 'Shipments'],
+    ['/api/shipments/tracking/{trackingNumber}', 'get', 200, 'Shipments'],
+  ]) {
+    const operation = doc.paths[path][method];
+    assert.deepEqual(operation.tags, [tag]);
+    assert.deepEqual(operation.security, [{ bearer: [] }]);
+    for (const status of [success, 401, 403]) assert.ok(operation.responses[status]);
+  }
+
+  const post = doc.paths['/api/fulfillment/orders/{id}/shipments'].post;
+  assert.equal(post.requestBody.content['application/json'].schema.$ref, '#/components/schemas/CreateShipmentDto');
+  const schema = doc.components.schemas.CreateShipmentDto;
+  assert.deepEqual(schema.required, ['carrier']);
+  assert.ok(post.responses[404]);
+  assert.ok(post.responses[409]);
+});
+
+test('Fulfillment endpoints enforce the role matrix and reject unauthorized callers', async () => {
+  const { token: customer } = await createActor('fulfillment-denied-customer');
+  const { token: staff } = await createActor('fulfillment-denied-staff', Role.Staff);
+  const { token: inventory } = await createActor('fulfillment-allowed-inv', Role.InventoryManager);
+  const { token: admin } = await createActor('fulfillment-allowed-admin', Role.Admin);
+
+  assertError(await request('/fulfillment/orders'), 401);
+  assertError(await request('/fulfillment/orders', { token: customer }), 403);
+  assertError(await request('/fulfillment/orders', { token: staff }), 403);
+  assert.equal((await request('/fulfillment/orders', { token: inventory })).response.status, 200);
+  assert.equal((await request('/fulfillment/orders', { token: admin })).response.status, 200);
+});
+
+test('Inventory Manager can pack and ship an order, generating traceable shipments', async () => {
+  const { variants: [variant] } = await createCatalog('fulfillment-test');
+  const { token: customerToken, address } = await createBuyer('fulfillment-buyer');
+  const { token: inventoryToken } = await createActor('fulfillment-manager', Role.InventoryManager);
+  const { token: strangerToken } = await createActor('fulfillment-stranger');
+
+  await insert(InventoryStock, { variantId: variant.id, quantity: 10 });
+  await setCartItem(variant.id, 1, customerToken);
+  const placed = await checkout(address.id, customerToken);
+  assert.equal(placed.response.status, 201);
+  const orderId = placed.body.data.id;
+  deleteAfter.push([Shipment, { orderId }]);
+
+  const list = await request('/fulfillment/orders', { token: inventoryToken });
+  assert.equal(list.response.status, 200);
+  const orderInList = list.body.data.find((o) => o.id === orderId);
+  assert.ok(orderInList);
+  assert.equal(orderInList.status, OrderStatus.Placed);
+
+  const packed = await request(`/fulfillment/orders/${orderId}/pack`, { method: 'PATCH', token: inventoryToken });
+  assert.equal(packed.response.status, 200);
+  assert.equal(packed.body.data.status, OrderStatus.Processing);
+
+  const rePacked = await request(`/fulfillment/orders/${orderId}/pack`, { method: 'PATCH', token: inventoryToken });
+  assert.equal(rePacked.response.status, 200);
+  assert.equal(rePacked.body.data.status, OrderStatus.Processing);
+
+  const trackingNumber = `TRK-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const shipped = await request(`/fulfillment/orders/${orderId}/shipments`, {
+    method: 'POST',
+    token: inventoryToken,
+    body: { carrier: 'Pathao', trackingNumber },
+  });
+  assert.equal(shipped.response.status, 201);
+  assert.equal(shipped.body.data.orderId, orderId);
+  assert.equal(shipped.body.data.carrier, 'Pathao');
+  assert.equal(shipped.body.data.trackingNumber, trackingNumber);
+  assert.equal(shipped.body.data.status, ShipmentStatus.InTransit);
+
+  const duplicate = await request(`/fulfillment/orders/${orderId}/shipments`, {
+    method: 'POST',
+    token: inventoryToken,
+    body: { carrier: 'DHL', trackingNumber: `TRK-DUP-${randomUUID().slice(0, 4)}` },
+  });
+  assertError(duplicate, 409);
+
+  const packAfterShip = await request(`/fulfillment/orders/${orderId}/pack`, { method: 'PATCH', token: inventoryToken });
+  assertError(packAfterShip, 409);
+
+  const customerTracking = await request(`/shipments/order/${orderId}`, { token: customerToken });
+  assert.equal(customerTracking.response.status, 200);
+  assert.equal(customerTracking.body.data.trackingNumber, trackingNumber);
+
+  const strangerTracking = await request(`/shipments/order/${orderId}`, { token: strangerToken });
+  assertError(strangerTracking, 404);
+
+  const publicTracking = await request(`/shipments/tracking/${trackingNumber}`, { token: customerToken });
+  assert.equal(publicTracking.response.status, 200);
+  assert.equal(publicTracking.body.data.trackingNumber, trackingNumber);
+  assert.equal(publicTracking.body.data.orderId, orderId);
+
+  const missingTracking = await request('/shipments/tracking/NONEXISTENT_TRACKING_NO', { token: customerToken });
+  assertError(missingTracking, 404);
+});
+
+test('OpenAPI exposes all 55 registered application operations', async () => {
   const result = await request('/docs-json');
   assert.equal(result.response.status, 200);
   const paths = Object.entries(result.body.paths);
@@ -2033,7 +2135,7 @@ test('OpenAPI exposes all 50 registered application operations', async () => {
     .reduce((total, [, operations]) => total + Object.keys(operations).length, 0);
   assert.deepEqual([
     count('/api/admin'), count('/api/staff'), count('/api/inventory'), count('/api/products'),
-    count('/api/auth'), count('/api/health'),
-  ], [6, 20, 5, 2, 3, 1]);
-  assert.equal(paths.reduce((total, [, operations]) => total + Object.keys(operations).length, 0), 50);
+    count('/api/auth'), count('/api/health'), count('/api/fulfillment'), count('/api/shipments'),
+  ], [6, 20, 5, 2, 3, 1, 3, 2]);
+  assert.equal(paths.reduce((total, [, operations]) => total + Object.keys(operations).length, 0), 55);
 });

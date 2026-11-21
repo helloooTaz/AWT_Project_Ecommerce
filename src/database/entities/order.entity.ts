@@ -1,8 +1,17 @@
-import { Check, Column, Entity, Index, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Check, Column, Entity, Index, JoinColumn, ManyToOne, OneToMany, OneToOne } from 'typeorm';
 import type { ShippingAddress } from './address.entity';
 import { BaseEntity } from './base.entity';
 import { ProductVariant } from './catalog.entity';
+import { Shipment } from './shipment.entity';
 import { User } from './user.entity';
+
+export enum OrderStatus {
+  Placed = 'placed',
+  Processing = 'processing',
+  Shipped = 'shipped',
+  Delivered = 'delivered',
+  Cancelled = 'cancelled',
+}
 
 @Entity('orders')
 @Index('ix_orders_user_time', ['userId', 'createdAt'])
@@ -21,8 +30,19 @@ export class Order extends BaseEntity {
   @Column('integer')
   totalMinor!: number;
 
+  @Column({
+    type: 'enum',
+    enum: OrderStatus,
+    enumName: 'order_status',
+    default: OrderStatus.Placed,
+  })
+  status!: OrderStatus;
+
   @OneToMany(() => OrderItem, (item) => item.order)
   items!: OrderItem[];
+
+  @OneToOne(() => Shipment, (shipment) => shipment.order)
+  shipment?: Shipment;
 }
 
 @Entity('order_items')

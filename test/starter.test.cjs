@@ -10,6 +10,7 @@ const { hashPassword, verifyPassword } = require('../dist/modules/auth/password'
 const {
   CreateAddressDto, SetCartItemDto, UpdateAddressDto, UpdateProfileDto,
 } = require('../dist/modules/customer/customer.dto');
+const { CreateShipmentDto, FulfillmentQueryDto } = require('../dist/modules/fulfillment/fulfillment.dto');
 const { Page, PageQueryDto } = require('../dist/common/http/pagination');
 const { requestLogging } = require('../dist/common/http/request-logging');
 
@@ -104,4 +105,22 @@ test('bcrypt hashes passwords and rejects input beyond its UTF-8 limit', async (
   assert.equal(await verifyPassword(password, digest), true);
   assert.equal(await verifyPassword('wrong-password', digest), false);
   assert.throws(() => hashPassword('é'.repeat(37)), /72 UTF-8 bytes/);
+});
+
+test('shipment create requires a valid carrier and rejects empty or oversized fields', async () => {
+  const valid = await transform(CreateShipmentDto, { carrier: 'DHL', trackingNumber: 'TRK-123' });
+  assert.equal(valid.carrier, 'DHL');
+  assert.equal(valid.trackingNumber, 'TRK-123');
+  await assert.rejects(transform(CreateShipmentDto, {}));
+  await assert.rejects(transform(CreateShipmentDto, { carrier: '' }));
+  await assert.rejects(transform(CreateShipmentDto, { carrier: 'A'.repeat(101) }));
+  await assert.rejects(transform(CreateShipmentDto, { carrier: 'DHL', trackingNumber: 'B'.repeat(101) }));
+});
+
+test('fulfillment query validates order status and page limits', async () => {
+  const query = await transform(FulfillmentQueryDto, { status: 'placed', page: '1', limit: '20' }, 'query');
+  assert.equal(query.status, 'placed');
+  assert.equal(query.page, 1);
+  assert.equal(query.limit, 20);
+  await assert.rejects(transform(FulfillmentQueryDto, { status: 'invalid_status' }, 'query'));
 });
